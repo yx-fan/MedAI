@@ -198,3 +198,6 @@ cython_debug/
 /data/raw/masks/*
 /data/processed/*
 /data/features/*
+/data/nnunet/nnUNet_preprocessed/Dataset201_MyTask/*
+/data/nnunet/nnUNet_raw/Dataset201_MyTask/*
+/data/nnunet/nnUNet_trained_models/Dataset201_MyTask/*
