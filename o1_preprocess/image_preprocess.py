@@ -150,6 +150,38 @@ def get_processed_all_tumor_slices(ct, mask, margin=10, out_size=(256, 256)):
     print(f"Found {len(results)} tumor slices with non-zero mask pixels.")
     return results
 
+def get_processed_2_5d_slices(ct, mask, center_idx, N=5, margin=10, out_size=(256, 256)):
+    """
+    Generate 2.5D slices around a center slice index.
+    Returns a stack of slices centered at center_idx, with N slices in total.
+    ct: 3D numpy array of shape (H, W, num_slices)
+    mask: 3D numpy array of shape (H, W, num_slices)
+    center_idx: index of the center slice
+    N: total number of slices to generate (must be odd)
+    margin: margin around the tumor to crop
+    out_size: output size for the cropped patches (H, W)
+    Returns:
+        arr: numpy array of shape (2, N, H, W) with [CT slices, mask slices]
+    """
+    assert N % 2 == 1, "N must be odd"
+    half = N // 2
+    slices = []
+    for offset in range(-half, half+1):
+        idx = center_idx + offset
+        if idx < 0 or idx >= ct.shape[2]:
+            ct_slice = np.zeros_like(ct[:, :, 0])
+            mask_slice = np.zeros_like(mask[:, :, 0])
+        else:
+            ct_slice = ct[:, :, idx]
+            mask_slice = mask[:, :, idx]
+        ct_norm = normalize_ct(ct_slice)
+        roi_ct, roi_mask = crop_roi(ct_norm, mask_slice, margin=margin, out_size=out_size)
+        slices.append([roi_ct, roi_mask])
+    arr = np.stack(slices, axis=1)  # [2, N, H, W]
+    return arr
+
+
+
 # Optional: get a 3D patch around the tumor
 def get_processed_3d_patch(ct, mask, margin=10, out_size=(128, 128, 64)):
     """
@@ -198,3 +230,4 @@ def visualize_slice_with_mask(ct, mask, slice_idx, figsize=(6,6), save_path=None
         plt.close()
     else:
         plt.show()
+

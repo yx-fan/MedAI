@@ -12,7 +12,22 @@ def run_feature_extraction(
 ):
     meta = pd.read_csv(meta_csv)
     img_paths = [Path(processed_dir) / f for f in meta['npy_file']]
-    encoder = get_resnet18_encoder(device=device)
+
+    # Auto-detect channel number from the first sample
+    if not img_paths:
+        print("No input files found!")
+        return
+    arr = np.load(str(img_paths[0]))
+    if arr.ndim == 4:
+        n_input_channels = arr.shape[0] * arr.shape[1]  # e.g. (2, 5, 256, 256) -> 10
+    elif arr.ndim == 3:
+        n_input_channels = arr.shape[0]                 # e.g. (2, 256, 256) -> 2
+    else:
+        raise ValueError(f"Unknown npy shape: {arr.shape}")
+
+    print(f"Auto-detected input channels: {n_input_channels}")
+
+    encoder = get_resnet18_encoder(n_input_channels=n_input_channels, device=device)
     features, errors = extract_features(img_paths, encoder, device=device)
 
     np.save(out_feature_file, features)
