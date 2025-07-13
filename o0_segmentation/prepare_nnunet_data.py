@@ -25,7 +25,7 @@ def binarize_mask(mask_path):
     data = img.get_fdata()
     unique_vals_before = np.unique(data)
     print(f"[DEBUG] Before binarization, mask {mask_path.name} unique values: {unique_vals_before}")
-    data_bin = (data > 0).astype(np.uint8)  # 所有非0变成1
+    data_bin = (data > 0).astype(np.uint8)  # Convert to binary (0 or 1)
     bin_img = nib.Nifti1Image(data_bin, img.affine, img.header)
     nib.save(bin_img, str(mask_path))
 
@@ -62,10 +62,10 @@ def main():
             skipped += 1
             continue
 
-        # 二值化mask，覆盖原文件
+        # binarize the mask
         binarize_mask(mask_path)
 
-        # 检查二值化结果是否合规
+        # check if mask is binary
         if not check_mask_binary(mask_path):
             print(f"[WARNING] Mask check failed for {case}, skipping.")
             skipped += 1

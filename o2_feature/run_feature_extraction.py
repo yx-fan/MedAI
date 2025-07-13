@@ -28,12 +28,19 @@ def run_feature_extraction(
     print(f"Auto-detected input channels: {n_input_channels}")
 
     encoder = get_resnet18_encoder(n_input_channels=n_input_channels, device=device)
-    features, errors = extract_features(img_paths, encoder, device=device)
+    features, errors = extract_features(img_paths, encoder, device=device)  # shape: (num_samples, feature_dim)
 
     np.save(out_feature_file, features)
-    feat_df = pd.DataFrame(features, index=meta.index)
+
+    # Combine features with metadata
+    feat_df = meta[['patient_id', 'slice_idx', 'npy_file']].copy()
+    feat_dim = features.shape[1]
+    for i in range(feat_dim):
+        feat_df[f'feat_{i}'] = features[:, i]
+
     feat_df.to_csv(out_feature_csv, index=False)
     print(f"Extracted features saved to {out_feature_file} and {out_feature_csv}")
+
     if errors:
         with open("feature_extraction_errors.txt", "w") as fout:
             fout.write('\n'.join(errors))
