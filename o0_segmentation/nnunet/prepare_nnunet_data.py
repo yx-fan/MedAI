@@ -74,7 +74,12 @@ def process_case(case, img_dir, mask_dir):
     mask_path = RAW_MASK_DIR / f"{case}.nii.gz"
 
     # binarize the mask
-    binarize_mask(mask_path)
+    try:
+        binarize_mask(mask_path)
+    except Exception as e:
+        print(f"[ERROR] Failed to process mask {mask_path}: {e}")
+        return False
+
     if not check_mask_binary(mask_path):
         print(f"[WARNING] Mask check failed for {case}, skipping.")
         return False
