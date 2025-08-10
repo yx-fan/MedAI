@@ -9,8 +9,12 @@ CHECKPOINT=${4:-checkpoint_best.pth}  # default best checkpoint
 
 # ===== Paths =====
 TASK=201
-IMAGES_TS="data/nnunet/nnUNet_raw/Dataset201_MyTask/imagesTs"
-OUTPUT_DIR="data/nnunet/predictions/${CONFIG}_pred"
+export nnUNet_raw="$(pwd)/data/nnunet/nnUNet_raw"
+export nnUNet_preprocessed="$(pwd)/data/nnunet/nnUNet_preprocessed"
+export nnUNet_results="$(pwd)/data/nnunet/nnUNet_trained_models"
+
+IMAGES_TS="$nnUNet_raw/Dataset${TASK}_MyTask/imagesTs"
+OUTPUT_DIR="$(pwd)/data/nnunet/predictions/${CONFIG}_pred"
 mkdir -p "$OUTPUT_DIR"
 
 # ===== Output Information =====
