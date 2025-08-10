@@ -21,7 +21,7 @@ output_dir = Path("data/nnunet/predictions/ensemble_failsafe_pred")
 output_dir.mkdir(parents=True, exist_ok=True)
 
 # 体素比例阈值（低于这个比例的模型将被忽略）
-min_voxel_ratio = 0.0001  # 0.01% 的体素比例
+min_voxel_ratio = 0.00005  # 0.005% 的体素比例
 
 # ===== Load case list from one model =====
 case_files = sorted(Path(pred_dirs["2d"]).glob("*.nii.gz"))
