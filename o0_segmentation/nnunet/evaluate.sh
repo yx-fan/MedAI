@@ -13,6 +13,8 @@ LABELS_TS="${DATASET_DIR}/labelsTs"
 # 如果是 ensemble 模型，预测结果放在 ensemble_pred 文件夹
 if [ "$CONFIG" == "ensemble" ]; then
     PRED_DIR="data/nnunet/predictions/ensemble_pred"
+elif [ "$CONFIG" == "ensemble_voting" ]; then
+    PRED_DIR="data/nnunet/predictions/ensemble_voting_pred"
 else
     PRED_DIR="data/nnunet/predictions/${CONFIG}_pred"
 fi
