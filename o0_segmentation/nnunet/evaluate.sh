@@ -8,8 +8,11 @@ CHECKPOINT=${3:-checkpoint_best.pth}  # default checkpoint
 
 # ===== Paths =====
 TASK=201
-LABELS_TS="data/nnunet/nnUNet_raw/Dataset201_MyTask/labelsTs"
+DATASET_DIR="data/nnunet/nnUNet_raw/Dataset201_MyTask"
+LABELS_TS="${DATASET_DIR}/labelsTs"
 PRED_DIR="data/nnunet/predictions/${CONFIG}_pred"
+DJFILE="${DATASET_DIR}/dataset.json"
+PFILE="data/nnunet/nnUNet_preprocessed/Dataset201_MyTask/nnUNetPlans.json"
 
 # ===== Output Information =====
 echo "📊 Starting evaluation..."
@@ -19,10 +22,10 @@ echo "Predictions dir : $PRED_DIR"
 
 # ===== Execute Evaluation =====
 nnUNetv2_evaluate_folder \
-    -ref "$LABELS_TS" \
-    -pred "$PRED_DIR" \
-    -l 1 \
-    -d "$TASK" \
-    -c "$CONFIG"
+    "$LABELS_TS" \
+    "$PRED_DIR" \
+    -djfile "$DJFILE" \
+    -pfile "$PFILE" \
+    -o "data/nnunet/evaluation/${CONFIG}_fold${FOLD}"
 
 echo "✅ Evaluation finished for Config=$CONFIG, Fold=$FOLD!"
