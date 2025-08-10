@@ -15,6 +15,8 @@ if [ "$CONFIG" == "ensemble" ]; then
     PRED_DIR="data/nnunet/predictions/ensemble_pred"
 elif [ "$CONFIG" == "ensemble_voting" ]; then
     PRED_DIR="data/nnunet/predictions/ensemble_voting_pred"
+elif [ "$CONFIG" == "ensemble_failsafe" ]; then
+    PRED_DIR="data/nnunet/predictions/ensemble_failsafe_pred"
 else
     PRED_DIR="data/nnunet/predictions/${CONFIG}_pred"
 fi
