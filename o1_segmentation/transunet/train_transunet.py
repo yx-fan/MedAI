@@ -96,7 +96,7 @@ if __name__ == "__main__":
 
     # add learning rate scheduler
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-        optimizer, mode="min", factor=0.5, patience=5
+        optimizer, mode="min", factor=0.2, patience=5
     )
 
     best_val_dice = 0.0
