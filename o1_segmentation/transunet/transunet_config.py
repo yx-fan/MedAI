@@ -19,7 +19,7 @@ IMG_SIZE = (256, 256)   # input image size (H, W)
 BATCH_SIZE = 8
 NUM_EPOCHS = 150
 LEARNING_RATE = 2e-4
-NUM_WORKERS = 0
+NUM_WORKERS = 4
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"  # auto switch
 
 # ================== Model configuration ==================
