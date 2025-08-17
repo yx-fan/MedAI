@@ -52,7 +52,9 @@ class TransUNetDataset(Dataset):
 
         # split CT and mask
         imgs = torch.from_numpy(data[0]).float()  # [N, H, W]
+        # print(f"shape of imgs: {imgs.shape}")
         masks = torch.from_numpy(data[1]).long()  # [N, H, W]
+        # print(f"shape of masks: {masks.shape}")
 
         if self.data_format == "2d":
             # take the center slice (single channel)
@@ -73,6 +75,8 @@ class TransUNetDataset(Dataset):
 
         else:
             raise ValueError(f"Unsupported data_format: {self.data_format}")
+
+        # print(f"[DEBUG] mask unique values: {masks.unique()}")
 
         # resize if needed
         if imgs.shape[-2:] != self.img_size:

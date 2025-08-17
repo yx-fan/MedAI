@@ -25,35 +25,49 @@ def set_seed(seed=42):
 
 # ================== Metrics ==================
 def dice_score(pred, target, num_classes=2, smooth=1e-6):
-    pred = torch.argmax(pred, dim=1)  # [B, H, W]
-    if pred.ndim == 2: pred = pred.unsqueeze(0)
-    if target.ndim == 2: target = target.unsqueeze(0)
+    """
+    pred: [B, C, H, W] (logits)
+    target: [B, H, W] (int)
+    """
+    pred_soft = torch.softmax(pred, dim=1)   # 转成概率
+    pred_label = torch.argmax(pred_soft, dim=1)  # [B,H,W]
 
-    dice_list = []
-    for cls in range(1, num_classes):  # skip background
-        pred_cls = (pred == cls).float()
+    dice_scores = []
+    for cls in range(1, num_classes):  # 跳过背景
+        pred_cls = (pred_label == cls).float()
         target_cls = (target == cls).float()
+
         intersection = (pred_cls * target_cls).sum(dim=(1, 2))
         union = pred_cls.sum(dim=(1, 2)) + target_cls.sum(dim=(1, 2))
-        dice_cls = ((2. * intersection + smooth) / (union + smooth)).mean()
-        dice_list.append(dice_cls.item())
-    return np.mean(dice_list) if dice_list else 0.0
+
+        dice = (2 * intersection + smooth) / (union + smooth)  # [B]
+        dice_scores.append(dice)
+
+    if dice_scores:
+        return torch.cat(dice_scores).mean().item()
+    else:
+        return 0.0
 
 
 def iou_score(pred, target, num_classes=2, smooth=1e-6):
-    pred = torch.argmax(pred, dim=1)
-    if pred.ndim == 2: pred = pred.unsqueeze(0)
-    if target.ndim == 2: target = target.unsqueeze(0)
+    pred_soft = torch.softmax(pred, dim=1)
+    pred_label = torch.argmax(pred_soft, dim=1)
 
-    iou_list = []
-    for cls in range(1, num_classes):  # skip background
-        pred_cls = (pred == cls).float()
+    iou_scores = []
+    for cls in range(1, num_classes):  # 跳过背景
+        pred_cls = (pred_label == cls).float()
         target_cls = (target == cls).float()
+
         intersection = (pred_cls * target_cls).sum(dim=(1, 2))
         union = pred_cls.sum(dim=(1, 2)) + target_cls.sum(dim=(1, 2)) - intersection
-        iou_cls = ((intersection + smooth) / (union + smooth)).mean()
-        iou_list.append(iou_cls.item())
-    return np.mean(iou_list) if iou_list else 0.0
+
+        iou = (intersection + smooth) / (union + smooth)  # [B]
+        iou_scores.append(iou)
+
+    if iou_scores:
+        return torch.cat(iou_scores).mean().item()
+    else:
+        return 0.0
 
 
 # ================== Loss ==================
@@ -63,10 +77,9 @@ class DiceLoss(nn.Module):
         self.smooth = smooth
 
     def forward(self, pred, target):
-        # pred: [B, C, H, W], target: [B, H, W]
         pred = torch.softmax(pred, dim=1)  
-        target_onehot = torch.nn.functional.one_hot(target, num_classes=pred.shape[1])  # [B, H, W, C]
-        target_onehot = target_onehot.permute(0, 3, 1, 2).float()  # [B, C, H, W]
+        target_onehot = torch.nn.functional.one_hot(target, num_classes=pred.shape[1])  # [B,H,W,C]
+        target_onehot = target_onehot.permute(0, 3, 1, 2).float()  # [B,C,H,W]
 
         intersection = (pred * target_onehot).sum(dim=(0, 2, 3))
         union = pred.sum(dim=(0, 2, 3)) + target_onehot.sum(dim=(0, 2, 3))
@@ -143,7 +156,7 @@ if __name__ == "__main__":
         # Train
         model.train()
         epoch_loss = 0
-        for imgs, masks in tqdm(train_loader, desc=f"Epoch {epoch+1}/{NUM_EPOCHS} [Train]"):
+        for step, (imgs, masks) in enumerate(tqdm(train_loader, desc=f"Epoch {epoch+1}/{NUM_EPOCHS} [Train]")):
             imgs, masks = imgs.to(device), masks.to(device)
             outputs = model(imgs)
             loss = criterion(outputs, masks)
@@ -152,6 +165,11 @@ if __name__ == "__main__":
             loss.backward()
             optimizer.step()
             epoch_loss += loss.item()
+
+            if step % 200 == 0:  # 每隔200 step 打印一次调试信息
+                print(f"[DEBUG][Train] step {step}, imgs shape {imgs.shape}, "
+                      f"masks unique {masks.unique()}, "
+                      f"pred unique {torch.argmax(outputs, dim=1).unique()}")
 
         avg_train_loss = epoch_loss / len(train_loader)
 
@@ -162,14 +180,21 @@ if __name__ == "__main__":
         val_iou = 0
 
         with torch.no_grad():
-            for imgs, masks in tqdm(val_loader, desc=f"Epoch {epoch+1}/{NUM_EPOCHS} [Val]"):
+            for step, (imgs, masks) in enumerate(tqdm(val_loader, desc=f"Epoch {epoch+1}/{NUM_EPOCHS} [Val]")):
                 imgs, masks = imgs.to(device), masks.to(device)
                 outputs = model(imgs)
                 loss = criterion(outputs, masks)
                 val_loss += loss.item()
 
-                val_dice += dice_score(outputs, masks, num_classes=NUM_CLASSES)
-                val_iou += iou_score(outputs, masks, num_classes=NUM_CLASSES)
+                batch_dice = dice_score(outputs, masks, num_classes=NUM_CLASSES)
+                batch_iou = iou_score(outputs, masks, num_classes=NUM_CLASSES)
+                val_dice += batch_dice
+                val_iou += batch_iou
+
+                if step % 200 == 0:
+                    print(f"[DEBUG][Val] step {step}, masks unique {masks.unique()}, "
+                          f"pred unique {torch.argmax(outputs, dim=1).unique()}, "
+                          f"batch dice {batch_dice:.4f}, batch iou {batch_iou:.4f}")
 
         avg_val_loss = val_loss / len(val_loader)
         avg_val_dice = val_dice / len(val_loader)
