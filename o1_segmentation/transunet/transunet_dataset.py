@@ -1,11 +1,12 @@
 import os
 import torch
+import pandas as pd
 import numpy as np
 from torch.utils.data import Dataset
 import torch.nn.functional as F
 
 class TransUNetDataset(Dataset):
-    def __init__(self, img_dir, img_size=(256, 256), data_format="2.5d"):
+    def __init__(self, img_dir, img_size=(256, 256), mode="npy", data_format="2.5d", split="train"):
         """
         Dataset for TransUNet training.
         Each .npy file has shape (2, N, H, W):
@@ -19,8 +20,25 @@ class TransUNetDataset(Dataset):
         """
         self.img_dir = img_dir
         self.img_size = img_size
+        self.mode = mode.lower()
         self.data_format = data_format.lower()
-        self.files = sorted([f for f in os.listdir(img_dir) if f.endswith(".npy")])
+        self.split = split.lower()
+
+        # Load meta.csv
+        meta_path = os.path.join(img_dir, "meta.csv")
+        if not os.path.exists(meta_path):
+            raise RuntimeError(f"meta.csv not found in {img_dir}")
+        meta = pd.read_csv(meta_path)
+
+        # Filter by split
+        if "split" not in meta.columns:
+            raise RuntimeError("meta.csv must have a 'split' column with values 'train' or 'test'")
+        meta = meta[meta["split"] == self.split]
+
+        if "npy_file" not in meta.columns:
+            raise RuntimeError("meta.csv must have a 'npy_file' column containing .npy filenames")
+
+        self.files = meta["npy_file"].tolist()
 
         if not self.files:
             raise RuntimeError(f"No npy files found in {img_dir}")

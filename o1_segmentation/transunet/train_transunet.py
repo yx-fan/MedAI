@@ -5,10 +5,23 @@ from torch.utils.data import DataLoader, random_split
 from tqdm import tqdm
 from sklearn.metrics import roc_auc_score
 import numpy as np
+from datetime import datetime
+import random
 
 from transunet_config import *
 from transunet_dataset import TransUNetDataset
 from transunet_model import TransUNet
+from prepare_split import prepare_split
+
+
+# ================== Fix random seeds for reproducibility ==================
+def set_seed(seed=42):
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
 
 
 # ================== Dice Calculation ==================
@@ -32,37 +45,40 @@ def dice_score(pred, target, num_classes=2, smooth=1e-6):
 
 if __name__ == "__main__":
     # ================== Configuration ==================
+    set_seed(42)  # ensure reproducibility
+
     os.makedirs(MODEL_SAVE_DIR, exist_ok=True)
     device = torch.device(DEVICE if torch.cuda.is_available() else "cpu")
 
-    # Create log file
-    log_file = os.path.join(MODEL_SAVE_DIR, "training_log.txt")
+    # Create log file with timestamp
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    log_file = os.path.join(MODEL_SAVE_DIR, f"training_log_{timestamp}.txt")
     log_f = open(log_file, "w")
 
+    # ================== Prepare dataset split ==================
+    prepare_split(IMAGES_TR)  # will update meta.csv if needed
+
     # ================== Dataset (npy format) ==================
-    full_dataset = TransUNetDataset(
+    train_dataset_full = TransUNetDataset(
         img_dir=IMAGES_TR,
         img_size=IMG_SIZE,
         mode="npy",
-        data_format=DATA_FORMAT
+        data_format=DATA_FORMAT,
+        split="train"
     )
 
-    # Automatically infer input channel size
-    in_ch = 1 if DATA_FORMAT == "2d" else full_dataset[0][0].shape[0]
+    # automatically infer input channels
+    in_ch = 1 if DATA_FORMAT == "2d" else train_dataset_full[0][0].shape[0]
 
-    # Split dataset into training / validation sets
-    val_size = int(len(full_dataset) * 0.2)
-    train_size = len(full_dataset) - val_size
-    train_dataset, val_dataset = random_split(full_dataset, [train_size, val_size])
+    # split train / val
+    val_size = int(len(train_dataset_full) * 0.2)
+    train_size = len(train_dataset_full) - val_size
+    train_dataset, val_dataset = random_split(train_dataset_full, [train_size, val_size])
 
-    train_loader = DataLoader(
-        train_dataset, batch_size=BATCH_SIZE, shuffle=True,
-        num_workers=NUM_WORKERS, pin_memory=True
-    )
-    val_loader = DataLoader(
-        val_dataset, batch_size=1, shuffle=False,
-        num_workers=NUM_WORKERS, pin_memory=True
-    )
+    train_loader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True,
+                              num_workers=NUM_WORKERS, pin_memory=True)
+    val_loader = DataLoader(val_dataset, batch_size=1, shuffle=False,
+                            num_workers=NUM_WORKERS, pin_memory=True)
 
     # ================== Model ==================
     model = TransUNet(
@@ -77,6 +93,12 @@ if __name__ == "__main__":
 
     criterion = nn.CrossEntropyLoss()
     optimizer = torch.optim.Adam(model.parameters(), lr=LEARNING_RATE)
+
+    # add learning rate scheduler
+    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+        optimizer, mode="min", factor=0.5, patience=5
+    )
+
     best_val_dice = 0.0
 
     # ================== Training Loop ==================
@@ -121,6 +143,9 @@ if __name__ == "__main__":
         avg_val_loss = val_loss / len(val_loader)
         avg_val_dice = val_dice / len(val_loader)
 
+        # update scheduler
+        scheduler.step(avg_val_loss)
+
         val_auc = None
         if NUM_CLASSES == 2 and all_targets:
             try:
@@ -137,27 +162,25 @@ if __name__ == "__main__":
         if val_auc is not None:
             log_msg += f" | Val AUC: {val_auc:.4f}"
         print(log_msg)
-        log_f.write(log_msg + "\n")   # save to file
+        log_f.write(log_msg + "\n")
         log_f.flush()
 
-        # ---------- Save best model ----------
+        # ---------- Save latest model (always overwrite) ----------
+        latest_path = os.path.join(MODEL_SAVE_DIR, "transunet_latest.pth")
+        torch.save(model.state_dict(), latest_path)
+
+        # ---------- Save best model (overwrite only if improved) ----------
         if avg_val_dice > best_val_dice:
             best_val_dice = avg_val_dice
-            best_path = os.path.join(
-                MODEL_SAVE_DIR,
-                f"transunet_best_{DATA_FORMAT}_ps{VIT_PATCH_SIZE}_d{VIT_DEPTH}_e{epoch+1}.pth"
-            )
+            best_path = os.path.join(MODEL_SAVE_DIR, "transunet_best.pth")
             torch.save(model.state_dict(), best_path)
-            save_msg = f"✅ Best model saved to {best_path} (Dice={best_val_dice:.4f})"
+            save_msg = f"✅ Best model updated at epoch {epoch+1} (Dice={best_val_dice:.4f})"
             print(save_msg)
             log_f.write(save_msg + "\n")
             log_f.flush()
 
     # ================== Save final model ==================
-    final_path = os.path.join(
-        MODEL_SAVE_DIR,
-        f"transunet_final_{DATA_FORMAT}_ps{VIT_PATCH_SIZE}_d{VIT_DEPTH}.pth"
-    )
+    final_path = os.path.join(MODEL_SAVE_DIR, "transunet_final.pth")
     torch.save(model.state_dict(), final_path)
     done_msg = f"🏁 Training complete. Final model saved to {final_path}"
     print(done_msg)

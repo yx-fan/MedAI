@@ -10,7 +10,8 @@ IMAGES_TR = os.path.join(BASE_DIR, "train_2_5d")   # training npy files
 IMAGES_TS = os.path.join(BASE_DIR, "test_2_5d")    # testing npy files
 
 # Directory to save model checkpoints (auto-created if not exists)
-MODEL_SAVE_DIR = os.path.abspath("./data/checkpoints_transunet")
+PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "../.."))
+MODEL_SAVE_DIR = os.path.join(PROJECT_ROOT, "data/transunet/checkpoints_transunet")
 os.makedirs(MODEL_SAVE_DIR, exist_ok=True)
 
 # ================== Training configuration ==================
