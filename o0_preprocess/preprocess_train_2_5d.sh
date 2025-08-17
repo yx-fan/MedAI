@@ -1,5 +1,5 @@
 #!/bin/bash
-# 预处理训练集（有 mask），生成 2.5D 数据
+# Preprocess training set (with mask) to generate 2.5D data
 
 IMAGES_DIR="data/raw/images"
 MASKS_DIR="data/raw/masks"

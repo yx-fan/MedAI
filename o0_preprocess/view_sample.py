@@ -3,20 +3,20 @@ import nibabel as nib
 import matplotlib.pyplot as plt
 from pathlib import Path
 
-# 选一个病人的 ID
+# Pick a sample patient ID
 pid = "160980"
 ct_path = Path("data/raw/images") / f"{pid}.nii.gz"
 mask_path = Path("data/raw/masks") / f"{pid}.nii.gz"
 
-# 读取
+# Load CT and mask
 ct_img = nib.load(str(ct_path)).get_fdata()
 mask_img = nib.load(str(mask_path)).get_fdata()
 
-# 随便选几张有肿瘤的切片
+# Select a few slices with tumors
 tumor_slices = np.where(np.any(mask_img > 0, axis=(0, 1)))[0]
-sample_slices = tumor_slices[len(tumor_slices)//2 - 1 : len(tumor_slices)//2 + 2]  # 中间的3张
+sample_slices = tumor_slices[len(tumor_slices)//2 - 1 : len(tumor_slices)//2 + 2]  # Three slices
 
-# 保存图片
+# Save images
 for i, idx in enumerate(sample_slices):
     plt.figure(figsize=(8, 4))
     plt.subplot(1, 2, 1)
@@ -26,7 +26,7 @@ for i, idx in enumerate(sample_slices):
 
     plt.subplot(1, 2, 2)
     plt.imshow(ct_img[:, :, idx], cmap="gray")
-    plt.imshow(mask_img[:, :, idx], alpha=0.3, cmap="Reds")  # 红色mask
+    plt.imshow(mask_img[:, :, idx], alpha=0.3, cmap="Reds")
     plt.title(f"CT + Mask Slice {idx}")
     plt.axis("off")
 

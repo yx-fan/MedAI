@@ -1,5 +1,5 @@
 #!/bin/bash
-# 预处理预测集（无 mask），生成 3D 数据
+# Preprocess prediction set (without mask) to generate 3D data
 
 IMAGES_DIR="data/raw/images"
 OUTPUT_DIR="data/processed/predict_3d"

@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Optional, Tuple
 from scipy.ndimage import zoom, rotate
 
-# ==== 全局默认参数 ====
+# ==== Global default params ====
 DEFAULT_MARGIN = 20
 DEFAULT_MIN_CROP_RATIO = 0.9
 
@@ -29,10 +29,10 @@ def compute_global_roi(ct: np.ndarray,
                        mode: str = "train",
                        min_crop_ratio: float = DEFAULT_MIN_CROP_RATIO):
     """
-    保守裁剪策略：
-    - train：有 mask → 按 mask 裁，但 margin 大
-    - predict：无 mask → 裁中心区域（默认 90% 高宽）
-    - 保证最小裁剪比例
+    Conservative cropping strategy:
+    - train: if mask exists → crop by mask + margin
+    - predict: no mask → crop center region (default 90%)
+    - ensure minimum crop ratio
     """
     h, w = ct.shape[0], ct.shape[1]
     y_min, y_max, x_min, x_max = 0, h, 0, w
@@ -42,14 +42,14 @@ def compute_global_roi(ct: np.ndarray,
         y_min, y_max = max(coords[:, 0].min() - margin, 0), min(coords[:, 0].max() + margin, h)
         x_min, x_max = max(coords[:, 1].min() - margin, 0), min(coords[:, 1].max() + margin, w)
     elif mode == "predict":
-        # 保守裁中心区域
+        # center crop
         crop_h, crop_w = int(h * min_crop_ratio), int(w * min_crop_ratio)
         y_min = max(0, (h - crop_h) // 2)
         y_max = y_min + crop_h
         x_min = max(0, (w - crop_w) // 2)
         x_max = x_min + crop_w
 
-    # 保证最小裁剪比例
+    # enforce minimum crop ratio
     crop_h, crop_w = y_max - y_min, x_max - x_min
     min_h, min_w = int(h * min_crop_ratio), int(w * min_crop_ratio)
     if crop_h < min_h:
@@ -71,14 +71,14 @@ def crop_roi_global(ct_slice: np.ndarray,
                     debug_dir: Optional[str] = None,
                     debug_name: Optional[str] = None,
                     mode: str = "train"):
-    """根据全局统一 ROI 裁剪单张 slice."""
+    """Crop single slice based on global ROI."""
     y_min, y_max, x_min, x_max = global_bbox
     ct_crop = cv2.resize(ct_slice[y_min:y_max, x_min:x_max], out_size, interpolation=cv2.INTER_LINEAR)
     mask_crop = None
     if mask_slice is not None:
         mask_crop = cv2.resize(mask_slice[y_min:y_max, x_min:x_max], out_size, interpolation=cv2.INTER_NEAREST)
 
-    # Debug 保存
+    # Debug save
     if debug_dir and debug_name:
         os.makedirs(debug_dir, exist_ok=True)
         ct_vis = (ct_crop * 255).astype(np.uint8)
@@ -93,7 +93,7 @@ def crop_roi_global(ct_slice: np.ndarray,
 
 
 def augment_slice(ct_slice: np.ndarray, mask_slice: np.ndarray):
-    """数据增强：随机旋转、翻转、亮度扰动"""
+    """Data augmentation: rotation, flip, brightness change"""
     angle = np.random.uniform(-15, 15)
     ct_slice = rotate(ct_slice, angle, reshape=False, order=1, mode="nearest")
     mask_slice = rotate(mask_slice, angle, reshape=False, order=0, mode="nearest")
@@ -110,11 +110,9 @@ def augment_slice(ct_slice: np.ndarray, mask_slice: np.ndarray):
 
 
 def get_processed_2d(pid, ct: np.ndarray, mask: Optional[np.ndarray], slice_idx: int,
-                     margin=DEFAULT_MARGIN, out_size=(256, 256),
-                     mode="train", augment=False):
+                     global_bbox: Tuple[int, int, int, int],
+                     out_size=(256, 256), mode="train", augment=False):
     """Return normalized + cropped single slice."""
-    global_bbox = compute_global_roi(ct, mask, margin=margin, mode=mode)
-
     ct_norm = normalize_ct(ct[:, :, slice_idx])
     mask_slice = mask[:, :, slice_idx] if mask is not None else None
     roi_ct, roi_mask = crop_roi_global(ct_norm, mask_slice, global_bbox, out_size, mode=mode)
@@ -126,12 +124,11 @@ def get_processed_2d(pid, ct: np.ndarray, mask: Optional[np.ndarray], slice_idx:
 
 
 def get_processed_2_5d(pid, ct: np.ndarray, mask: Optional[np.ndarray], center_idx: int,
-                       N=5, margin=DEFAULT_MARGIN, out_size=(256, 256),
+                       N=5, global_bbox: Tuple[int, int, int, int]=None,
+                       out_size=(256, 256),
                        mode="train", augment=False):
-    """Return 2.5D stack (N slices, centered at center_idx)."""
+    """Return 2.5D stack (N slices)."""
     assert N % 2 == 1, "N must be odd"
-    global_bbox = compute_global_roi(ct, mask, margin=margin, mode=mode)
-
     half = N // 2
     slices = []
     for offset in range(-half, half + 1):
@@ -150,12 +147,10 @@ def get_processed_2_5d(pid, ct: np.ndarray, mask: Optional[np.ndarray], center_i
         slices.append([ct_slice, mask_slice])
     return np.stack(slices, axis=1)
 
-
 def get_processed_3d_patch(pid, ct: np.ndarray, mask: Optional[np.ndarray],
-                           margin=DEFAULT_MARGIN, out_size=(128, 128, 64),
-                           mode="train"):
+                           global_bbox: Tuple[int, int, int, int],
+                           out_size=(128, 128, 64), mode="train"):
     """Return cropped + resized 3D patch."""
-    global_bbox = compute_global_roi(ct, mask, margin=margin, mode=mode)
     y_min, y_max, x_min, x_max = global_bbox
 
     ct_crop = normalize_ct(ct[y_min:y_max, x_min:x_max, :])

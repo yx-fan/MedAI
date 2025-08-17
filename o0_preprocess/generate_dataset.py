@@ -2,6 +2,7 @@ import os
 from pathlib import Path
 import numpy as np
 import pandas as pd
+import csv
 from preprocess_utils import (
     load_nifti,
     get_processed_2d,
@@ -24,6 +25,7 @@ def generate_dataset(images_dir,
                      augment=False):
     """
     Generate processed dataset for training or inference.
+    Each processed sample is saved immediately, and meta.csv is updated row by row.
 
     Args:
         images_dir: folder containing CT images (.nii.gz)
@@ -43,8 +45,18 @@ def generate_dataset(images_dir,
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    meta_info = []
+    meta_file = output_dir / "meta.csv"
 
+    # If meta.csv does not exist, create it with header
+    if not meta_file.exists():
+        with open(meta_file, "w", newline="") as f:
+            writer = csv.DictWriter(f, fieldnames=[
+                "patient_id", "slice_idx", "ct_file", "mask_file",
+                "npy_file", "format", "has_tumor"
+            ])
+            writer.writeheader()
+
+    # Process each CT image
     for ct_path in images_dir.glob("*.nii.gz"):
         pid = ct_path.name.replace(".nii.gz", "")
         mask_path = masks_dir / f"{pid}.nii.gz" if masks_dir else None
@@ -58,6 +70,13 @@ def generate_dataset(images_dir,
         if mode == "train" and mask is None:
             print(f"[WARN] Missing mask for {pid}, skipping.")
             continue
+
+        # Compute global ROI once per case
+        if mask is not None:
+            from preprocess_utils import compute_global_roi
+            global_bbox = compute_global_roi(ct, mask, margin=margin, mode=mode)
+        else:
+            global_bbox = None
 
         # Select slice indices
         if mask is not None:
@@ -74,23 +93,31 @@ def generate_dataset(images_dir,
             # Predict mode → all slices
             slice_indices = np.arange(ct.shape[2])
 
+        # Process each slice (or 3D patch)
         for idx in slice_indices:
+            npy_name = f"{pid}_slice{idx}.npy" if format != "3d" else f"{pid}_3d.npy"
+            out_path = output_dir / npy_name
+
+            # Skip if already exists
+            if out_path.exists():
+                print(f"[Skip] {npy_name} already exists.")
+                continue
+
+            # Generate processed data
             if format == "2d":
-                processed = get_processed_2d(pid, ct, mask, idx, margin, out_size, mode=mode, augment=augment)
+                processed = get_processed_2d(pid, ct, mask, idx, global_bbox, out_size, mode=mode, augment=augment)
             elif format == "2.5d":
-                processed = get_processed_2_5d(pid, ct, mask, idx, N, margin, out_size, mode=mode, augment=augment)
+                processed = get_processed_2_5d(pid, ct, mask, idx, N, global_bbox, out_size, mode=mode, augment=augment)
             elif format == "3d":
-                processed = get_processed_3d_patch(pid, ct, mask, margin, out_size_3d, mode=mode)
+                processed = get_processed_3d_patch(pid, ct, mask, global_bbox, out_size_3d, mode=mode)
             else:
                 raise ValueError("Invalid format")
 
             if processed is None:
                 continue
 
-            npy_name = (
-                f"{pid}_slice{idx}.npy" if format != "3d" else f"{pid}_3d.npy"
-            )
-            np.save(output_dir / npy_name, processed)
+            # Save processed data
+            np.save(out_path, processed)
 
             has_tumor = (
                 int(mask is not None and np.any(mask[:, :, idx] > 0))
@@ -98,7 +125,7 @@ def generate_dataset(images_dir,
                 else None
             )
 
-            meta_info.append({
+            record = {
                 "patient_id": pid,
                 "slice_idx": idx if format != "3d" else None,
                 "ct_file": str(ct_path),
@@ -106,8 +133,13 @@ def generate_dataset(images_dir,
                 "npy_file": npy_name,
                 "format": format,
                 "has_tumor": has_tumor
-            })
+            }
 
-    # Save meta.csv
-    pd.DataFrame(meta_info).to_csv(output_dir / "meta.csv", index=False)
-    print(f"✅ Done! Processed {len(meta_info)} samples.")
+            # Append record to meta.csv
+            with open(meta_file, "a", newline="") as f:
+                writer = csv.DictWriter(f, fieldnames=record.keys())
+                writer.writerow(record)
+
+            print(f"[OK] Saved {npy_name} and updated meta.csv")
+
+    print("✅ All processing finished.")
