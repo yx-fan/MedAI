@@ -4,32 +4,40 @@ import nibabel as nib
 IMAGES_DIR = "data/raw/images"
 MASKS_DIR = "data/raw/masks"
 
-def check_nifti_dir(directory):
-    bad_files = []
-    for root, _, files in os.walk(directory):
-        for fname in files:
-            if not (fname.endswith(".nii") or fname.endswith(".nii.gz")):
-                continue
-            fpath = os.path.join(root, fname)
-            try:
-                img = nib.load(fpath)
-                _ = img.get_fdata()
-            except Exception as e:
-                bad_files.append((fpath, str(e)))
-    return bad_files
+def check_nifti_pair(img_path, mask_path):
+    try:
+        img = nib.load(img_path).get_fdata()
+    except Exception as e:
+        return f"❌ Image load error: {e}"
+    try:
+        mask = nib.load(mask_path).get_fdata()
+    except Exception as e:
+        return f"❌ Mask load error: {e}"
 
-bad_images = check_nifti_dir(IMAGES_DIR)
-bad_masks = check_nifti_dir(MASKS_DIR)
+    if img.shape != mask.shape:
+        return f"⚠️ Shape mismatch: image {img.shape}, mask {mask.shape}"
+    return None
 
-if not bad_images and not bad_masks:
-    print("✅ All NIfTI files loaded successfully.")
+bad_files = []
+for root, _, files in os.walk(IMAGES_DIR):
+    for fname in files:
+        if not (fname.endswith(".nii") or fname.endswith(".nii.gz")):
+            continue
+        pid = fname.replace(".nii.gz", "").replace(".nii", "")
+        img_path = os.path.join(root, fname)
+        mask_path = os.path.join(MASKS_DIR, fname)
+        print(f"Checking {img_path} and {mask_path}")
+        if not os.path.exists(mask_path):
+            bad_files.append((img_path, "❌ Missing corresponding mask"))
+            continue
+
+        result = check_nifti_pair(img_path, mask_path)
+        if result:
+            bad_files.append((img_path, result))
+
+if not bad_files:
+    print("✅ All image-mask pairs are consistent and readable.")
 else:
-    print("❌ Found problematic files:")
-    if bad_images:
-        print("\n[Images with errors]")
-        for fpath, reason in bad_images:
-            print(f"{fpath} --> {reason}")
-    if bad_masks:
-        print("\n[Masks with errors]")
-        for fpath, reason in bad_masks:
-            print(f"{fpath} --> {reason}")
+    print("❌ Found problematic pairs:")
+    for fpath, reason in bad_files:
+        print(f"{fpath} --> {reason}")
