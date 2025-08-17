@@ -145,7 +145,9 @@ def get_processed_2_5d(pid, ct: np.ndarray, mask: Optional[np.ndarray], center_i
             if augment and mode == "train":
                 ct_slice, mask_slice = augment_slice(ct_slice, mask_slice)
         slices.append([ct_slice, mask_slice])
-    return np.stack(slices, axis=1)
+    out = np.stack(slices, axis=1)
+    print(f"Processed 2.5D slice for {pid}, center slice {center_idx}, shape: {out.shape}")
+    return out
 
 def get_processed_3d_patch(pid, ct: np.ndarray, mask: Optional[np.ndarray],
                            global_bbox: Tuple[int, int, int, int],

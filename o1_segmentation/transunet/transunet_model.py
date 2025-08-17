@@ -54,7 +54,7 @@ class TransformerEncoder(nn.Module):
 
 # TransUNet body
 class TransUNet(nn.Module):
-    def __init__(self, in_ch=1, img_size=(128, 128), patch_size=16, emb_size=768, depth=12, heads=12, num_classes=2):
+    def __init__(self, in_ch=5, img_size=(256, 256), patch_size=16, emb_size=768, depth=12, heads=12, num_classes=1):
         super().__init__()
         self.img_size = img_size
         self.patch_embed = PatchEmbedding(in_ch, patch_size, emb_size, img_size)
@@ -74,7 +74,7 @@ class TransUNet(nn.Module):
         x = self.patch_embed(x)           # [B, 1+HW/ps^2, E]
         x = self.transformer(x)
         x = x[:, 1:, :]                   # drop CLS
-        h = w = int(x.size(1) ** 0.5)     # e.g., 8x8 patches
+        h = w = int(x.size(1) ** 0.5)     # e.g., 16x16 patches for 256/16
         x = x.permute(0, 2, 1).contiguous().view(B, -1, h, w)
 
         x = self.up1(x); x = self.conv1(x)

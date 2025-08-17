@@ -11,16 +11,16 @@ from transunet_dataset import TransUNetDataset
 from transunet_model import TransUNet
 
 
-# ================== Dice 计算 ==================
+# ================== Dice Calculation ==================
 def dice_score(pred, target, num_classes=2, smooth=1e-6):
-    pred = torch.argmax(pred, dim=1)  # [B, H, W]
-    if pred.ndim == 2:  # batch=1 时补维度
+    pred = torch.argmax(pred, dim=1)  # convert logits to predicted classes [B, H, W]
+    if pred.ndim == 2:  # add batch dimension if missing
         pred = pred.unsqueeze(0)
     if target.ndim == 2:
         target = target.unsqueeze(0)
 
     dice_list = []
-    for cls in range(1, num_classes):  # 跳过背景
+    for cls in range(1, num_classes):  # skip background class
         pred_cls = (pred == cls).float()
         target_cls = (target == cls).float()
         intersection = (pred_cls * target_cls).sum(dim=(1, 2))
@@ -31,14 +31,15 @@ def dice_score(pred, target, num_classes=2, smooth=1e-6):
 
 
 if __name__ == "__main__":
-    # ================== 配置 ==================
+    # ================== Configuration ==================
     os.makedirs(MODEL_SAVE_DIR, exist_ok=True)
     device = torch.device(DEVICE if torch.cuda.is_available() else "cpu")
 
-    # Mac 上建议 NUM_WORKERS=0
-    num_workers = 0
+    # Create log file
+    log_file = os.path.join(MODEL_SAVE_DIR, "training_log.txt")
+    log_f = open(log_file, "w")
 
-    # ================== 数据集（npy 格式） ==================
+    # ================== Dataset (npy format) ==================
     full_dataset = TransUNetDataset(
         img_dir=IMAGES_TR,
         img_size=IMG_SIZE,
@@ -46,24 +47,24 @@ if __name__ == "__main__":
         data_format=DATA_FORMAT
     )
 
-    # 自动获取输入通道数
+    # Automatically infer input channel size
     in_ch = 1 if DATA_FORMAT == "2d" else full_dataset[0][0].shape[0]
 
-    # 划分训练 / 验证集
+    # Split dataset into training / validation sets
     val_size = int(len(full_dataset) * 0.2)
     train_size = len(full_dataset) - val_size
     train_dataset, val_dataset = random_split(full_dataset, [train_size, val_size])
 
     train_loader = DataLoader(
         train_dataset, batch_size=BATCH_SIZE, shuffle=True,
-        num_workers=num_workers, pin_memory=True
+        num_workers=NUM_WORKERS, pin_memory=True
     )
     val_loader = DataLoader(
         val_dataset, batch_size=1, shuffle=False,
-        num_workers=num_workers, pin_memory=True
+        num_workers=NUM_WORKERS, pin_memory=True
     )
 
-    # ================== 模型 ==================
+    # ================== Model ==================
     model = TransUNet(
         in_ch=in_ch,
         img_size=IMG_SIZE,
@@ -78,9 +79,9 @@ if __name__ == "__main__":
     optimizer = torch.optim.Adam(model.parameters(), lr=LEARNING_RATE)
     best_val_dice = 0.0
 
-    # ================== 训练循环 ==================
+    # ================== Training Loop ==================
     for epoch in range(NUM_EPOCHS):
-        # ---------- 训练 ----------
+        # ---------- Training ----------
         model.train()
         epoch_loss = 0
         for imgs, masks in tqdm(train_loader, desc=f"Epoch {epoch+1}/{NUM_EPOCHS} [Train]"):
@@ -95,7 +96,7 @@ if __name__ == "__main__":
 
         avg_train_loss = epoch_loss / len(train_loader)
 
-        # ---------- 验证 ----------
+        # ---------- Validation ----------
         model.eval()
         val_loss = 0
         val_dice = 0
@@ -110,6 +111,7 @@ if __name__ == "__main__":
 
                 val_dice += dice_score(outputs, masks, num_classes=NUM_CLASSES)
 
+                # For binary classification: collect predictions for AUC
                 if NUM_CLASSES == 2:
                     probs = torch.softmax(outputs, dim=1)[:, 1].cpu().numpy().flatten()
                     targets = masks.cpu().numpy().flatten()
@@ -126,7 +128,7 @@ if __name__ == "__main__":
             except ValueError:
                 val_auc = None
 
-        # ---------- 日志 ----------
+        # ---------- Logging ----------
         log_msg = (
             f"Epoch {epoch+1}/{NUM_EPOCHS} | "
             f"Train Loss: {avg_train_loss:.4f} | Val Loss: {avg_val_loss:.4f} | "
@@ -135,8 +137,10 @@ if __name__ == "__main__":
         if val_auc is not None:
             log_msg += f" | Val AUC: {val_auc:.4f}"
         print(log_msg)
+        log_f.write(log_msg + "\n")   # save to file
+        log_f.flush()
 
-        # ---------- 保存最佳模型 ----------
+        # ---------- Save best model ----------
         if avg_val_dice > best_val_dice:
             best_val_dice = avg_val_dice
             best_path = os.path.join(
@@ -144,12 +148,20 @@ if __name__ == "__main__":
                 f"transunet_best_{DATA_FORMAT}_ps{VIT_PATCH_SIZE}_d{VIT_DEPTH}_e{epoch+1}.pth"
             )
             torch.save(model.state_dict(), best_path)
-            print(f"✅ Best model saved to {best_path} (Dice={best_val_dice:.4f})")
+            save_msg = f"✅ Best model saved to {best_path} (Dice={best_val_dice:.4f})"
+            print(save_msg)
+            log_f.write(save_msg + "\n")
+            log_f.flush()
 
-    # ================== 保存最终模型 ==================
+    # ================== Save final model ==================
     final_path = os.path.join(
         MODEL_SAVE_DIR,
         f"transunet_final_{DATA_FORMAT}_ps{VIT_PATCH_SIZE}_d{VIT_DEPTH}.pth"
     )
     torch.save(model.state_dict(), final_path)
-    print(f"🏁 Training complete. Final model saved to {final_path}")
+    done_msg = f"🏁 Training complete. Final model saved to {final_path}"
+    print(done_msg)
+    log_f.write(done_msg + "\n")
+
+    # Close log file
+    log_f.close()
