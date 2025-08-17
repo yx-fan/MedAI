@@ -16,10 +16,10 @@ os.makedirs(MODEL_SAVE_DIR, exist_ok=True)
 
 # ================== Training configuration ==================
 IMG_SIZE = (256, 256)   # input image size (H, W)
-BATCH_SIZE = 8
-NUM_EPOCHS = 150
-LEARNING_RATE = 2e-4
-NUM_WORKERS = 4
+BATCH_SIZE = 4
+NUM_EPOCHS = 100
+LEARNING_RATE = 1e-4
+NUM_WORKERS = 2
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"  # auto switch
 
 # ================== Model configuration ==================
