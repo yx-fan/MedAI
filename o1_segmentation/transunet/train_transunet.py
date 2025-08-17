@@ -13,7 +13,7 @@ from transunet_model import TransUNet
 from prepare_split import prepare_split
 
 
-# ================== Fix random seeds for reproducibility ==================
+# ================== Fix random seeds ==================
 def set_seed(seed=42):
     random.seed(seed)
     np.random.seed(seed)
@@ -23,13 +23,11 @@ def set_seed(seed=42):
     torch.backends.cudnn.benchmark = False
 
 
-# ================== Dice Calculation ==================
+# ================== Metrics ==================
 def dice_score(pred, target, num_classes=2, smooth=1e-6):
     pred = torch.argmax(pred, dim=1)  # [B, H, W]
-    if pred.ndim == 2:
-        pred = pred.unsqueeze(0)
-    if target.ndim == 2:
-        target = target.unsqueeze(0)
+    if pred.ndim == 2: pred = pred.unsqueeze(0)
+    if target.ndim == 2: target = target.unsqueeze(0)
 
     dice_list = []
     for cls in range(1, num_classes):  # skip background
@@ -42,13 +40,10 @@ def dice_score(pred, target, num_classes=2, smooth=1e-6):
     return np.mean(dice_list) if dice_list else 0.0
 
 
-# ================== IoU Calculation ==================
 def iou_score(pred, target, num_classes=2, smooth=1e-6):
-    pred = torch.argmax(pred, dim=1)  # [B, H, W]
-    if pred.ndim == 2:
-        pred = pred.unsqueeze(0)
-    if target.ndim == 2:
-        target = target.unsqueeze(0)
+    pred = torch.argmax(pred, dim=1)
+    if pred.ndim == 2: pred = pred.unsqueeze(0)
+    if target.ndim == 2: target = target.unsqueeze(0)
 
     iou_list = []
     for cls in range(1, num_classes):  # skip background
@@ -61,22 +56,50 @@ def iou_score(pred, target, num_classes=2, smooth=1e-6):
     return np.mean(iou_list) if iou_list else 0.0
 
 
+# ================== Loss ==================
+class DiceLoss(nn.Module):
+    def __init__(self, smooth=1e-6):
+        super().__init__()
+        self.smooth = smooth
+
+    def forward(self, pred, target):
+        # pred: [B, C, H, W], target: [B, H, W]
+        pred = torch.softmax(pred, dim=1)  
+        target_onehot = torch.nn.functional.one_hot(target, num_classes=pred.shape[1])  # [B, H, W, C]
+        target_onehot = target_onehot.permute(0, 3, 1, 2).float()  # [B, C, H, W]
+
+        intersection = (pred * target_onehot).sum(dim=(0, 2, 3))
+        union = pred.sum(dim=(0, 2, 3)) + target_onehot.sum(dim=(0, 2, 3))
+        dice = (2. * intersection + self.smooth) / (union + self.smooth)
+        return 1 - dice.mean()
+
+
+class CEDiceLoss(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.ce = nn.CrossEntropyLoss()
+        self.dice = DiceLoss()
+
+    def forward(self, pred, target):
+        return self.ce(pred, target) + self.dice(pred, target)
+
+
+# ================== Main ==================
 if __name__ == "__main__":
-    # ================== Configuration ==================
     set_seed(42)
 
     os.makedirs(MODEL_SAVE_DIR, exist_ok=True)
     device = torch.device(DEVICE if torch.cuda.is_available() else "cpu")
 
-    # Create log file with timestamp
+    # Log file
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     log_file = os.path.join(MODEL_SAVE_DIR, f"training_log_{timestamp}.txt")
     log_f = open(log_file, "w")
 
-    # ================== Prepare dataset split ==================
+    # Dataset split
     prepare_split(IMAGES_TR)
 
-    # ================== Dataset ==================
+    # Dataset
     train_dataset_full = TransUNetDataset(
         img_dir=IMAGES_TR,
         img_size=IMG_SIZE,
@@ -96,7 +119,7 @@ if __name__ == "__main__":
     val_loader = DataLoader(val_dataset, batch_size=1, shuffle=False,
                             num_workers=max(1, NUM_WORKERS), pin_memory=True)
 
-    # ================== Model ==================
+    # Model
     model = TransUNet(
         in_ch=in_ch,
         img_size=IMG_SIZE,
@@ -107,18 +130,17 @@ if __name__ == "__main__":
         num_classes=NUM_CLASSES
     ).to(device)
 
-    criterion = nn.CrossEntropyLoss()
+    criterion = CEDiceLoss()
     optimizer = torch.optim.Adam(model.parameters(), lr=LEARNING_RATE)
-
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
         optimizer, mode="min", factor=0.5, patience=5
     )
 
     best_val_dice = 0.0
 
-    # ================== Training Loop ==================
+    # Training
     for epoch in range(NUM_EPOCHS):
-        # ---------- Training ----------
+        # Train
         model.train()
         epoch_loss = 0
         for imgs, masks in tqdm(train_loader, desc=f"Epoch {epoch+1}/{NUM_EPOCHS} [Train]"):
@@ -133,7 +155,7 @@ if __name__ == "__main__":
 
         avg_train_loss = epoch_loss / len(train_loader)
 
-        # ---------- Validation ----------
+        # Val
         model.eval()
         val_loss = 0
         val_dice = 0
@@ -155,7 +177,7 @@ if __name__ == "__main__":
 
         scheduler.step(avg_val_loss)
 
-        # ---------- Logging ----------
+        # Log
         current_lr = optimizer.param_groups[0]['lr']
         log_msg = (
             f"Epoch {epoch+1}/{NUM_EPOCHS} | "
@@ -167,11 +189,11 @@ if __name__ == "__main__":
         log_f.write(log_msg + "\n")
         log_f.flush()
 
-        # ---------- Save latest ----------
+        # Save latest
         latest_path = os.path.join(MODEL_SAVE_DIR, "transunet_latest.pth")
         torch.save(model.state_dict(), latest_path)
 
-        # ---------- Save best ----------
+        # Save best
         if avg_val_dice > best_val_dice:
             best_val_dice = avg_val_dice
             best_path = os.path.join(MODEL_SAVE_DIR, "transunet_best.pth")
@@ -181,7 +203,7 @@ if __name__ == "__main__":
             log_f.write(save_msg + "\n")
             log_f.flush()
 
-    # ================== Save final ==================
+    # Save final
     final_path = os.path.join(MODEL_SAVE_DIR, "transunet_final.pth")
     torch.save(model.state_dict(), final_path)
     done_msg = f"🏁 Training complete. Final model saved to {final_path}"
