@@ -132,7 +132,7 @@ for epoch in trange(num_epochs, desc="Total Progress"):
     # -------- Validation --------
     model.eval()
     val_loss = 0.0
-    fg_dices = []
+    fg_dices = []  # 存每个 batch 的前景 Dice
     with torch.no_grad():
         for step, batch in enumerate(tqdm(val_loader, desc="Validation", leave=False)):
             images, masks = batch["image"].to(device), batch["label"].to(device)
@@ -146,22 +146,27 @@ for epoch in trange(num_epochs, desc="Total Progress"):
                     overlap=0.25
                 )
                 loss = loss_fn(outputs, masks)
+
             val_loss += loss.item()
 
-            # 后处理 (to one-hot)
-            outputs = post_pred(outputs).cpu()
-            masks = post_label(masks).cpu()
+            # --- 后处理成 one-hot ---
+            outputs_oh = post_pred(outputs).cpu()   # [B, 2, H, W, D]
+            masks_oh   = post_label(masks).cpu()    # [B, 2, H, W, D]
 
-            # 只算前景 Dice
-            pred_fg = outputs[:, 1]
-            gt_fg   = masks[:, 1]
+            # --- 前景通道 (channel=1) ---
+            pred_fg = outputs_oh[:, 1, ...]   # [B, H, W, D]
+            gt_fg   = masks_oh[:, 1, ...]     # [B, H, W, D]
+
+            # --- Dice 计算 ---
             intersection = (pred_fg * gt_fg).sum().item()
             denom = pred_fg.sum().item() + gt_fg.sum().item()
             if denom > 0:
                 fg_dices.append(2.0 * intersection / denom)
 
+    # --- 平均 ---
     avg_val_loss = val_loss / len(val_loader)
     fg_dice = sum(fg_dices) / len(fg_dices) if fg_dices else 0.0
+
     print(f"Val Loss: {avg_val_loss:.4f}, FG Dice={fg_dice:.4f}, (FG cases used: {len(fg_dices)})")
     log_gpu("After Validation")
 
