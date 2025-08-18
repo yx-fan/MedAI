@@ -2,41 +2,43 @@ import os
 import csv
 import time
 import torch
-import torch.nn as nn
 from torch.optim import AdamW
 from monai.networks.nets import SwinUNETR
 from monai.losses import DiceCELoss
 from monai.metrics import DiceMetric
 from tqdm import tqdm, trange
 
-from data_loader import get_dataloaders  # make sure this exists
+from data_loader import get_dataloaders  # ✅ 你更新过的 dataloader
 
 # ==============================
 # Configuration
 # ==============================
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")  # avoid using MPS
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print(f"[INFO] Training on {device}")
 
-num_epochs = 50
+num_epochs = 100   # ⚡ 直肠癌小样本，建议多跑些 epoch
 learning_rate = 1e-4
-save_dir = "data/swinunetr"
+save_dir = "data/swinunetr_rectal"
 os.makedirs(save_dir, exist_ok=True)
 
-# Track best validation Dice
 best_dice = -1.0  
 
 # ==============================
 # Data Loaders
 # ==============================
-train_loader, val_loader = get_dataloaders(data_dir="./data/raw", batch_size=2)
+train_loader, val_loader = get_dataloaders(
+    data_dir="./data/raw",
+    batch_size=2,                # 可以改 4 如果显存够
+    patch_size=(160, 160, 64)    # ⚡ 更符合直肠癌 ROI
+)
 
 # ==============================
 # Model Definition
 # ==============================
 model = SwinUNETR(
     in_channels=1,
-    out_channels=2,  # background + foreground
-    feature_size=48,
+    out_channels=2,  # 背景 + 直肠癌 ROI
+    feature_size=24,  # ⚡ 24 比 48 轻很多，更适合 160³ patch
     use_checkpoint=True,
 ).to(device)
 
@@ -48,7 +50,7 @@ optimizer = AdamW(model.parameters(), lr=learning_rate, weight_decay=1e-5)
 dice_metric = DiceMetric(include_background=False, reduction="mean")
 
 # ==============================
-# Init CSV Logger
+# CSV Logger
 # ==============================
 log_path = os.path.join(save_dir, "train_log.csv")
 with open(log_path, "w", newline="") as f:
@@ -60,7 +62,7 @@ with open(log_path, "w", newline="") as f:
 # ==============================
 start_time = time.time()
 
-for epoch in trange(num_epochs, desc="Total Progress"):  # ✅ main progress bar
+for epoch in trange(num_epochs, desc="Total Progress"):
     epoch_start = time.time()
     print(f"\n[Epoch {epoch+1}/{num_epochs}]")
 
@@ -98,7 +100,6 @@ for epoch in trange(num_epochs, desc="Total Progress"):  # ✅ main progress bar
     avg_val_loss = val_loss / len(val_loader)
     dice_score = dice_metric.aggregate().item()
     dice_metric.reset()
-
     print(f"Val Loss: {avg_val_loss:.4f}, Dice: {dice_score:.4f}")
 
     # -------- Save Logs --------
@@ -106,7 +107,7 @@ for epoch in trange(num_epochs, desc="Total Progress"):  # ✅ main progress bar
         writer = csv.writer(f)
         writer.writerow([epoch+1, avg_train_loss, avg_val_loss, dice_score])
 
-    # -------- Save Checkpoints --------
+    # -------- Save Models --------
     latest_path = os.path.join(save_dir, "latest_model.pth")
     torch.save(model.state_dict(), latest_path)
 

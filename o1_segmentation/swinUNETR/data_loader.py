@@ -5,28 +5,20 @@ from monai.transforms import (
     Compose,
     LoadImaged,
     EnsureChannelFirstd,
-    ScaleIntensityd,
-    RandSpatialCropd,
+    Spacingd,
+    ScaleIntensityRanged,
+    RandCropByPosNegLabeld,
     RandFlipd,
+    RandRotate90d,
     EnsureTyped,
-    Resized,
 )
 from monai.data import Dataset
 
-
-def get_dataloaders(data_dir="./data/raw", batch_size=2, patch_size=(96, 96, 96)):
+def get_dataloaders(data_dir="./data/raw", batch_size=2, patch_size=(160, 160, 64)):
     """
-    Create train and validation dataloaders for medical image segmentation.
-    
-    Args:
-        data_dir (str): path to dataset folder. Expecting `images/` and `masks/`.
-        batch_size (int): batch size.
-        patch_size (tuple): size of cropped/resized patches.
-
-    Returns:
-        train_loader, val_loader (torch.utils.data.DataLoader)
+    Create train and validation dataloaders for rectal cancer segmentation.
     """
-    # Collect all image/mask files
+    # Collect files
     images = sorted(glob.glob(os.path.join(data_dir, "images", "*.nii.gz")))
     labels = sorted(glob.glob(os.path.join(data_dir, "masks", "*.nii.gz")))
     print("Found images:", len(images))
@@ -41,10 +33,16 @@ def get_dataloaders(data_dir="./data/raw", batch_size=2, patch_size=(96, 96, 96)
     train_transforms = Compose([
         LoadImaged(keys=["image", "label"]),
         EnsureChannelFirstd(keys=["image", "label"]),
-        ScaleIntensityd(keys=["image"]),
-        RandSpatialCropd(keys=["image", "label"], roi_size=patch_size, random_size=False),
-        RandFlipd(keys=["image", "label"], prob=0.5, spatial_axis=0),
-        Resized(keys=["image", "label"], spatial_size=patch_size, mode=("trilinear", "nearest")),  # keep aligned
+        Spacingd(keys=["image", "label"], pixdim=(1.0, 1.0, 3.0), mode=("bilinear", "nearest")),  # ✅ 统一 spacing
+        ScaleIntensityRanged(keys=["image"], a_min=-200, a_max=250, b_min=0.0, b_max=1.0, clip=True),  # ✅ CT HU 范围
+        RandCropByPosNegLabeld(
+            keys=["image", "label"],
+            label_key="label",
+            spatial_size=patch_size,
+            pos=1, neg=1, num_samples=2,  # 一半有肿瘤/直肠, 一半背景
+        ),
+        RandFlipd(keys=["image", "label"], prob=0.5, spatial_axis=[0]),   # 左右翻转
+        RandRotate90d(keys=["image", "label"], prob=0.5, max_k=3),        # 随机旋转
         EnsureTyped(keys=["image", "label"]),
     ])
 
@@ -52,8 +50,8 @@ def get_dataloaders(data_dir="./data/raw", batch_size=2, patch_size=(96, 96, 96)
     val_transforms = Compose([
         LoadImaged(keys=["image", "label"]),
         EnsureChannelFirstd(keys=["image", "label"]),
-        ScaleIntensityd(keys=["image"]),
-        Resized(keys=["image", "label"], spatial_size=patch_size, mode=("trilinear", "nearest")),
+        Spacingd(keys=["image", "label"], pixdim=(1.0, 1.0, 3.0), mode=("bilinear", "nearest")),
+        ScaleIntensityRanged(keys=["image"], a_min=-200, a_max=250, b_min=0.0, b_max=1.0, clip=True),
         EnsureTyped(keys=["image", "label"]),
     ])
 
@@ -61,17 +59,8 @@ def get_dataloaders(data_dir="./data/raw", batch_size=2, patch_size=(96, 96, 96)
     train_ds = Dataset(data=train_files, transform=train_transforms)
     val_ds = Dataset(data=val_files, transform=val_transforms)
 
-    # DataLoaders
-    train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True, num_workers=2)
-    val_loader = DataLoader(val_ds, batch_size=batch_size, shuffle=False, num_workers=2)
+    # Loaders
+    train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True, num_workers=4)
+    val_loader = DataLoader(val_ds, batch_size=batch_size, shuffle=False, num_workers=4)
 
     return train_loader, val_loader
-
-
-# ✅ Quick test
-if __name__ == "__main__":
-    train_loader, val_loader = get_dataloaders()
-    batch = next(iter(train_loader))
-    images, masks = batch["image"], batch["label"]
-    print("Image batch:", images.shape)
-    print("Mask batch:", masks.shape)
