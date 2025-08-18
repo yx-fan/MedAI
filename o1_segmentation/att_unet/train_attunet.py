@@ -2,6 +2,7 @@ import os
 import csv
 import time
 import torch
+import argparse
 from torch.optim import AdamW
 from torch.optim.lr_scheduler import CosineAnnealingLR, LinearLR, SequentialLR
 from monai.networks.nets import AttentionUnet
@@ -20,22 +21,33 @@ post_pred = AsDiscrete(argmax=True, to_onehot=2)
 post_label = AsDiscrete(to_onehot=2)
 
 # ==============================
+# Argparse
+# ==============================
+parser = argparse.ArgumentParser()
+parser.add_argument("--debug", action="store_true", help="Run in debug mode with small dataset and fewer epochs")
+args = parser.parse_args()
+
+# ==============================
 # Configuration
 # ==============================
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print(f"[INFO] Training on {device}")
 cudnn.benchmark = True
 
-num_epochs = 50
+num_epochs = 50 if not args.debug else 3
 learning_rate = 1e-4
-save_dir = "data/attunet"
+save_dir = "data/attunet_debug" if args.debug else "data/attunet"
 os.makedirs(save_dir, exist_ok=True)
 best_dice = -1.0  
 
 # ==============================
 # Data Loaders
 # ==============================
-train_loader, val_loader = get_dataloaders(data_dir="./data/raw", batch_size=4)
+train_loader, val_loader = get_dataloaders(
+    data_dir="./data/raw",
+    batch_size=2 if args.debug else 4,
+    debug=args.debug
+)
 
 # ==============================
 # Model Definition
@@ -44,8 +56,8 @@ model = AttentionUnet(
     spatial_dims=3,
     in_channels=1,
     out_channels=2,  # background + foreground
-    channels=(16, 32, 64, 128, 256),
-    strides=(2, 2, 2, 2),
+    channels=(8, 16, 32, 64) if args.debug else (16, 32, 64, 128, 256),
+    strides=(2, 2, 2) if args.debug else (2, 2, 2, 2),
 ).to(device)
 
 # ==============================
@@ -126,8 +138,11 @@ for epoch in trange(num_epochs, desc="Total Progress"):
 
             with torch.amp.autocast("cuda", enabled=(device.type == "cuda")):
                 outputs = sliding_window_inference(
-                    images, roi_size=(128, 128, 64),
-                    sw_batch_size=2, predictor=model, overlap=0.25
+                    images,
+                    roi_size=(64, 64, 32) if args.debug else (128, 128, 64),
+                    sw_batch_size=1 if args.debug else 2,
+                    predictor=model,
+                    overlap=0.25
                 )
                 loss = loss_fn(outputs, masks)
 
@@ -148,8 +163,13 @@ for epoch in trange(num_epochs, desc="Total Progress"):
 
     avg_val_loss = val_loss / len(val_loader)
     dice_scores = dice_metric.aggregate().cpu().numpy()
-    bg_dice, fg_dice = map(float, dice_scores)  # 转成 float
     dice_metric.reset()
+
+    # 兼容 batch 输出
+    if dice_scores.ndim == 2:
+        dice_scores = dice_scores.mean(axis=0)
+
+    bg_dice, fg_dice = float(dice_scores[0]), float(dice_scores[1])
 
     print(f"Val Loss: {avg_val_loss:.4f}, Dice (bg={bg_dice:.4f}, fg={fg_dice:.4f})")
     log_gpu("After Validation")

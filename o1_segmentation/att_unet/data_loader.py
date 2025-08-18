@@ -14,15 +14,25 @@ from monai.transforms import (
 )
 from monai.data import Dataset, list_data_collate
 
-def get_dataloaders(data_dir="./data/raw", batch_size=2, patch_size=(128, 128, 64)):
+def get_dataloaders(data_dir="./data/raw", batch_size=2, patch_size=(128, 128, 64), debug=False):
     """
     Create train and validation dataloaders for rectal cancer CT segmentation.
+    Args:
+        data_dir: path to dataset
+        batch_size: batch size for training
+        patch_size: crop size for training patches
+        debug: if True, only load a small subset of data for quick testing
     """
     # Collect files
     images = sorted(glob.glob(os.path.join(data_dir, "images", "*.nii.gz")))
     labels = sorted(glob.glob(os.path.join(data_dir, "masks", "*.nii.gz")))
     print("Found images:", len(images))
     print("Found labels:", len(labels))
+
+    if debug:  # ⚡ 小数据集
+        images = images[:8]
+        labels = labels[:8]
+        print(f"[DEBUG] Using subset: {len(images)} images")
 
     # Train/validation split (80/20)
     n_train = int(0.8 * len(images))
@@ -35,13 +45,11 @@ def get_dataloaders(data_dir="./data/raw", batch_size=2, patch_size=(128, 128, 6
         EnsureChannelFirstd(keys=["image", "label"]),
         Spacingd(keys=["image", "label"], pixdim=(1.0, 1.0, 3.0), mode=("bilinear", "nearest")),
         ScaleIntensityRanged(keys=["image"], a_min=-200, a_max=250, b_min=0.0, b_max=1.0, clip=True),
-        # ⚡ 前景增强采样
         RandCropByPosNegLabeld(
             keys=["image", "label"],
             label_key="label",
-            spatial_size=patch_size,   # 和 train_attunet.py 保持一致 (128,128,64)
-            pos=4,   # foreground patch 比例高
-            neg=1,
+            spatial_size=patch_size,   # ⚡ 外部传入
+            pos=4, neg=1,
             num_samples=4,
         ),
         RandFlipd(keys=["image", "label"], prob=0.5, spatial_axis=[0]),
@@ -65,12 +73,14 @@ def get_dataloaders(data_dir="./data/raw", batch_size=2, patch_size=(128, 128, 6
     # Loaders
     train_loader = DataLoader(
         train_ds, batch_size=batch_size, shuffle=True,
-        num_workers=4, pin_memory=True, persistent_workers=True,
+        num_workers=2 if debug else 4,   # ⚡ 调试时少开 workers
+        pin_memory=True, persistent_workers=not debug,
         collate_fn=list_data_collate
     )
     val_loader = DataLoader(
         val_ds, batch_size=1, shuffle=False,
-        num_workers=4, pin_memory=True, persistent_workers=True,
+        num_workers=2 if debug else 4,
+        pin_memory=True, persistent_workers=not debug,
         collate_fn=list_data_collate
     )
 
