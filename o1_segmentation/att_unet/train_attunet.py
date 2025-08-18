@@ -132,7 +132,7 @@ for epoch in trange(num_epochs, desc="Total Progress"):
     # -------- Validation --------
     model.eval()
     val_loss = 0.0
-    num_fg_cases = 0  # 有前景的样本数
+    fg_dices = []  # 存每个 batch 的前景 Dice
     with torch.no_grad():
         for step, batch in enumerate(tqdm(val_loader, desc="Validation", leave=False)):
             images, masks = batch["image"].to(device), batch["label"].to(device)
@@ -153,29 +153,17 @@ for epoch in trange(num_epochs, desc="Total Progress"):
             outputs = post_pred(outputs).cpu()
             masks = post_label(masks).cpu()
 
-            # 判断是否有前景
-            if masks.max() > 0:
-                dice_metric(y_pred=outputs, y=masks)
-                num_fg_cases += 1
-
-            # Debug 打印前几个 batch 的 bg/fg Dice
-            if step < 2:
-                tmp_metric = DiceMetric(include_background=True, reduction="none")
-                if masks.max() > 0:
-                    tmp_metric(y_pred=outputs, y=masks)
-                    dice_values = tmp_metric.aggregate().cpu().numpy().tolist()
-                    tmp_metric.reset()
-                    print(f"[Val][Batch {step}] Dice per class [bg, fg]: {dice_values}")
-                else:
-                    print(f"[Val][Batch {step}] skipped (no foreground in GT)")
+            # 手动算 FG Dice
+            intersection = (outputs[:,1] * masks[:,1]).sum().item()
+            pred_sum = outputs[:,1].sum().item()
+            label_sum = masks[:,1].sum().item()
+            denom = pred_sum + label_sum
+            if denom > 0:
+                fg_dices.append(2.0 * intersection / denom)
 
     avg_val_loss = val_loss / len(val_loader)
-
-    # 最终只统计前景 Dice
-    fg_dice = float(dice_metric.aggregate().cpu().numpy())
-    dice_metric.reset()
-
-    print(f"Val Loss: {avg_val_loss:.4f}, FG Dice={fg_dice:.4f}, (FG cases used: {num_fg_cases})")
+    fg_dice = sum(fg_dices) / len(fg_dices) if fg_dices else 0.0
+    print(f"Val Loss: {avg_val_loss:.4f}, FG Dice={fg_dice:.4f}, (FG cases used: {len(fg_dices)})")
     log_gpu("After Validation")
 
     # -------- Save Logs --------
