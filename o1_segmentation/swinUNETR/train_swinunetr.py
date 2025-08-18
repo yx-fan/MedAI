@@ -7,6 +7,7 @@ from torch.optim import AdamW
 from monai.networks.nets import SwinUNETR
 from monai.losses import DiceCELoss
 from monai.metrics import DiceMetric
+from monai.inferers import sliding_window_inference
 from tqdm import tqdm, trange
 
 from data_loader import get_dataloaders
@@ -49,6 +50,9 @@ loss_fn = DiceCELoss(to_onehot_y=True, softmax=True)
 optimizer = AdamW(model.parameters(), lr=learning_rate, weight_decay=1e-5)
 dice_metric = DiceMetric(include_background=False, reduction="mean")
 
+# ✅ 混合精度工具
+scaler = torch.cuda.amp.GradScaler(enabled=(device.type == "cuda"))
+
 # ==============================
 # CSV Logger
 # ==============================
@@ -72,10 +76,15 @@ for epoch in trange(num_epochs, desc="Total Progress"):
         images, masks = batch["image"].to(device), batch["label"].to(device)
 
         optimizer.zero_grad()
-        outputs = model(images)
-        loss = loss_fn(outputs, masks)
-        loss.backward()
-        optimizer.step()
+
+        with torch.cuda.amp.autocast(enabled=(device.type == "cuda")):
+            outputs = model(images)
+            loss = loss_fn(outputs, masks)
+
+        scaler.scale(loss).backward()
+        scaler.step(optimizer)
+        scaler.update()
+
         train_loss += loss.item()
 
     avg_train_loss = train_loss / len(train_loader)
@@ -83,19 +92,23 @@ for epoch in trange(num_epochs, desc="Total Progress"):
 
     # ---- Validation ----
     model.eval()
-    val_loss = 0.0
+    val_loss, dice_score = 0.0, 0.0
     with torch.no_grad():
         for batch in tqdm(val_loader, desc="Validation", leave=False):
             images, masks = batch["image"].to(device), batch["label"].to(device)
-            outputs = model(images)
-            loss = loss_fn(outputs, masks)
+
+            with torch.cuda.amp.autocast(enabled=(device.type == "cuda")):
+                outputs = sliding_window_inference(
+                    images, roi_size=(160, 160, 64), sw_batch_size=1, predictor=model, overlap=0.25
+                )
+                loss = loss_fn(outputs, masks)
+
             val_loss += loss.item()
             dice_metric(y_pred=outputs, y=masks)
 
     avg_val_loss = val_loss / len(val_loader)
     dice_score = dice_metric.aggregate().item()
     dice_metric.reset()
-    print(f"Val Loss: {avg_val_loss:.4f}, Dice: {dice_score:.4f}")
 
     # ---- Save Logs ----
     with open(log_path, "a", newline="") as f:

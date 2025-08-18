@@ -62,6 +62,6 @@ def get_dataloaders(data_dir="./data/raw", batch_size=2, patch_size=(160, 160, 6
 
     # Loaders
     train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True, num_workers=2, collate_fn=list_data_collate)
-    val_loader = DataLoader(val_ds, batch_size=batch_size, shuffle=False, num_workers=2, collate_fn=list_data_collate)
+    val_loader = DataLoader(val_ds, batch_size=1, shuffle=False, num_workers=2, collate_fn=list_data_collate)
 
     return train_loader, val_loader
