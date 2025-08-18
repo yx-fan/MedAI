@@ -1,3 +1,4 @@
+# train_swinunetr.py
 import os
 import csv
 import time
@@ -8,7 +9,7 @@ from monai.losses import DiceCELoss
 from monai.metrics import DiceMetric
 from tqdm import tqdm, trange
 
-from data_loader import get_dataloaders  # ✅ 你更新过的 dataloader
+from data_loader import get_dataloaders  # 用你最新版本
 
 # ==============================
 # Configuration
@@ -16,29 +17,25 @@ from data_loader import get_dataloaders  # ✅ 你更新过的 dataloader
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print(f"[INFO] Training on {device}")
 
-num_epochs = 100   # ⚡ 直肠癌小样本，建议多跑些 epoch
+num_epochs = 100
 learning_rate = 1e-4
-save_dir = "data/swinunetr_rectal"
+save_dir = "data/swinunetr"
 os.makedirs(save_dir, exist_ok=True)
-
 best_dice = -1.0  
 
 # ==============================
 # Data Loaders
 # ==============================
-train_loader, val_loader = get_dataloaders(
-    data_dir="./data/raw",
-    batch_size=2,                # 可以改 4 如果显存够
-    patch_size=(160, 160, 64)    # ⚡ 更符合直肠癌 ROI
-)
+train_loader, val_loader = get_dataloaders(data_dir="./data/raw", batch_size=2, patch_size=(160, 160, 64))
 
 # ==============================
 # Model Definition
 # ==============================
 model = SwinUNETR(
+    img_size=(160, 160, 64),   # ✅ 和 patch_size 对齐
     in_channels=1,
-    out_channels=2,  # 背景 + 直肠癌 ROI
-    feature_size=24,  # ⚡ 24 比 48 轻很多，更适合 160³ patch
+    out_channels=2,            # 背景 + 前景
+    feature_size=48,
     use_checkpoint=True,
 ).to(device)
 
@@ -61,7 +58,6 @@ with open(log_path, "w", newline="") as f:
 # Training Loop
 # ==============================
 start_time = time.time()
-
 for epoch in trange(num_epochs, desc="Total Progress"):
     epoch_start = time.time()
     print(f"\n[Epoch {epoch+1}/{num_epochs}]")
@@ -78,7 +74,6 @@ for epoch in trange(num_epochs, desc="Total Progress"):
         loss = loss_fn(outputs, masks)
         loss.backward()
         optimizer.step()
-
         train_loss += loss.item()
 
     avg_train_loss = train_loss / len(train_loader)
@@ -94,7 +89,6 @@ for epoch in trange(num_epochs, desc="Total Progress"):
 
             loss = loss_fn(outputs, masks)
             val_loss += loss.item()
-
             dice_metric(y_pred=outputs, y=masks)
 
     avg_val_loss = val_loss / len(val_loader)
@@ -122,10 +116,8 @@ for epoch in trange(num_epochs, desc="Total Progress"):
         torch.save(model.state_dict(), final_path)
         print(f"[INFO] Final model saved: {final_path}")
 
-    # -------- ETA Estimation --------
+    # -------- ETA --------
     epoch_time = time.time() - epoch_start
     elapsed = time.time() - start_time
     remaining = (num_epochs - (epoch + 1)) * epoch_time
-    print(f"[ETA] Epoch time: {epoch_time/60:.2f} min | "
-          f"Elapsed: {elapsed/60:.2f} min | "
-          f"Remaining: {remaining/60:.2f} min")
+    print(f"[ETA] Epoch time: {epoch_time/60:.2f} min | Elapsed: {elapsed/60:.2f} min | Remaining: {remaining/60:.2f} min")
