@@ -31,7 +31,7 @@ train_loader, val_loader = get_dataloaders(data_dir="./data/raw", batch_size=2)
 # Model Definition (3D UNet)
 # ==============================
 model = UNet(
-    dimensions=3,
+    spatial_dims=3,
     in_channels=1,
     out_channels=2,  # 背景 + 前景
     channels=(16, 32, 64, 128, 256),
