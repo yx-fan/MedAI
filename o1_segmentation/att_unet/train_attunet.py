@@ -10,6 +10,7 @@ from monai.losses import DiceCELoss
 from monai.metrics import DiceMetric
 from monai.inferers import sliding_window_inference
 from monai.transforms import AsDiscrete
+import torch.backends.cudnn as cudnn
 from tqdm import tqdm, trange
 from data_loader import get_dataloaders
 
@@ -22,6 +23,8 @@ post_label = AsDiscrete(to_onehot=2)
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print(f"[INFO] Training on {device}")
 
+cudnn.benchmark = True
+
 num_epochs = 50
 learning_rate = 1e-4
 save_dir = "data/attunet"
@@ -31,7 +34,7 @@ best_dice = -1.0
 # ==============================
 # Data Loaders
 # ==============================
-train_loader, val_loader = get_dataloaders(data_dir="./data/raw", batch_size=2)
+train_loader, val_loader = get_dataloaders(data_dir="./data/raw", batch_size=4)
 
 # ==============================
 # Model Definition
@@ -117,7 +120,7 @@ for epoch in trange(num_epochs, desc="Total Progress"):
             with torch.amp.autocast("cuda", enabled=(device.type == "cuda")):
                 outputs = sliding_window_inference(
                     images, roi_size=(160, 160, 64),
-                    sw_batch_size=1, predictor=model, overlap=0.25
+                    sw_batch_size=2, predictor=model, overlap=0.25
                 )
                 loss = loss_fn(outputs, masks)
 
