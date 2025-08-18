@@ -108,12 +108,13 @@ for epoch in trange(num_epochs, desc="Total Progress"):
     model.train()
     train_loss = 0.0
     for step, batch in enumerate(tqdm(train_loader, desc="Training", leave=False)):
-        images, masks = batch["image"].to(device), batch["label"].to(device)
+        images = batch["image"].to(device)
+        masks  = batch["label"].to(device).long()   # ✅ 显式转为 long，供 DiceFocalLoss 的 to_onehot_y 使用
 
         optimizer.zero_grad()
         with torch.amp.autocast("cuda", enabled=(device.type == "cuda")):
             outputs = model(images)
-            loss = loss_fn(outputs, masks)
+            loss = loss_fn(outputs, masks)          # ✅ 用 long 的 y
 
         scaler.scale(loss).backward()
         scaler.step(optimizer)
@@ -132,10 +133,11 @@ for epoch in trange(num_epochs, desc="Total Progress"):
     # -------- Validation --------
     model.eval()
     val_loss = 0.0
-    fg_dices = []  # 存每个 batch 的前景 Dice
+    fg_dices = []
     with torch.no_grad():
         for step, batch in enumerate(tqdm(val_loader, desc="Validation", leave=False)):
-            images, masks = batch["image"].to(device), batch["label"].to(device)
+            images = batch["image"].to(device)
+            masks  = batch["label"].to(device).long()   # ✅ 显式转为 long
 
             with torch.amp.autocast("cuda", enabled=(device.type == "cuda")):
                 outputs = sliding_window_inference(
@@ -145,17 +147,21 @@ for epoch in trange(num_epochs, desc="Total Progress"):
                     predictor=model,
                     overlap=0.25
                 )
-                loss = loss_fn(outputs, masks)
+                loss = loss_fn(outputs, masks)          # ✅ 与训练一致
 
             val_loss += loss.item()
 
-            # --- 后处理成 one-hot ---
-            outputs_oh = post_pred(outputs).cpu()   # [B, 2, H, W, D]
-            masks_oh   = post_label(masks).cpu()    # [B, 2, H, W, D]
+            # --- 预测后处理：argmax + one-hot (2 通道) ---
+            outputs_oh = post_pred(outputs).cpu().float()  # [B,2,H,W,D]
 
-            # --- 前景通道 (channel=1) ---
-            pred_fg = outputs_oh[:, 1, ...]   # [B, H, W, D]
-            gt_fg   = masks_oh[:, 1, ...]     # [B, H, W, D]
+            # --- GT 显式 one-hot（不依赖 AsDiscrete 对 label）---
+            # masks: [B,1,H,W,D] int, squeeze -> [B,H,W,D]
+            gt_oh = torch.nn.functional.one_hot(masks.squeeze(1), num_classes=2)  # [B,H,W,D,2]
+            gt_oh = gt_oh.permute(0, 4, 1, 2, 3).contiguous().cpu().float()       # [B,2,H,W,D]
+
+            # --- 前景通道 ---
+            pred_fg = outputs_oh[:, 1, ...]   # [B,H,W,D]
+            gt_fg   = gt_oh[:, 1, ...]        # [B,H,W,D]
 
             # --- Dice 计算 ---
             intersection = (pred_fg * gt_fg).sum().item()
