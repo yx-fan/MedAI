@@ -1,4 +1,3 @@
-# data_loader.py
 import os
 import glob
 from torch.utils.data import DataLoader
@@ -15,7 +14,7 @@ from monai.transforms import (
 )
 from monai.data import Dataset, list_data_collate
 
-def get_dataloaders(data_dir="./data/raw", batch_size=2, patch_size=(160, 160, 64)):
+def get_dataloaders(data_dir="./data/raw", batch_size=2, patch_size=(128, 128, 64)):
     """
     Create train and validation dataloaders for rectal cancer CT segmentation.
     """
@@ -36,18 +35,21 @@ def get_dataloaders(data_dir="./data/raw", batch_size=2, patch_size=(160, 160, 6
         EnsureChannelFirstd(keys=["image", "label"]),
         Spacingd(keys=["image", "label"], pixdim=(1.0, 1.0, 3.0), mode=("bilinear", "nearest")),
         ScaleIntensityRanged(keys=["image"], a_min=-200, a_max=250, b_min=0.0, b_max=1.0, clip=True),
+        # ⚡ 前景增强采样
         RandCropByPosNegLabeld(
             keys=["image", "label"],
             label_key="label",
-            spatial_size=patch_size,
-            pos=1, neg=1, num_samples=2,
+            spatial_size=patch_size,   # 和 train_attunet.py 保持一致 (128,128,64)
+            pos=4,   # foreground patch 比例高
+            neg=1,
+            num_samples=4,
         ),
         RandFlipd(keys=["image", "label"], prob=0.5, spatial_axis=[0]),
         RandRotate90d(keys=["image", "label"], prob=0.5, max_k=3),
         EnsureTyped(keys=["image", "label"]),
     ])
 
-    # Validation transforms
+    # Validation transforms (不做 crop，只做 spacing/intensity normalize)
     val_transforms = Compose([
         LoadImaged(keys=["image", "label"]),
         EnsureChannelFirstd(keys=["image", "label"]),
@@ -61,7 +63,15 @@ def get_dataloaders(data_dir="./data/raw", batch_size=2, patch_size=(160, 160, 6
     val_ds = Dataset(data=val_files, transform=val_transforms)
 
     # Loaders
-    train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True, num_workers=2, collate_fn=list_data_collate)
-    val_loader = DataLoader(val_ds, batch_size=1, shuffle=False, num_workers=2, collate_fn=list_data_collate)
+    train_loader = DataLoader(
+        train_ds, batch_size=batch_size, shuffle=True,
+        num_workers=4, pin_memory=True, persistent_workers=True,
+        collate_fn=list_data_collate
+    )
+    val_loader = DataLoader(
+        val_ds, batch_size=1, shuffle=False,
+        num_workers=4, pin_memory=True, persistent_workers=True,
+        collate_fn=list_data_collate
+    )
 
     return train_loader, val_loader
