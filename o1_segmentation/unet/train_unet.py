@@ -8,7 +8,7 @@ from monai.networks.nets import UNet
 from monai.losses import DiceCELoss
 from monai.metrics import DiceMetric
 from tqdm import tqdm, trange
-from data_loader import get_dataloaders  # 复用你已有的 dataloader
+from data_loader import get_dataloaders  # reuse existing dataloader
 
 # ==============================
 # Configuration
@@ -33,7 +33,7 @@ train_loader, val_loader = get_dataloaders(data_dir="./data/raw", batch_size=2)
 model = UNet(
     spatial_dims=3,
     in_channels=1,
-    out_channels=2,  # 背景 + 前景
+    out_channels=2,  # background + foreground
     channels=(16, 32, 64, 128, 256),
     strides=(2, 2, 2, 2),
     num_res_units=2,
@@ -65,8 +65,8 @@ for epoch in trange(num_epochs, desc="Total Progress"):
     # -------- Training --------
     model.train()
     train_loss = 0.0
-    for images, masks in tqdm(train_loader, desc="Training", leave=False):
-        images, masks = images.to(device), masks.to(device)
+    for batch in tqdm(train_loader, desc="Training", leave=False):
+        images, masks = batch["image"].to(device), batch["label"].to(device)
 
         optimizer.zero_grad()
         outputs = model(images)
@@ -83,8 +83,8 @@ for epoch in trange(num_epochs, desc="Total Progress"):
     model.eval()
     val_loss = 0.0
     with torch.no_grad():
-        for images, masks in tqdm(val_loader, desc="Validation", leave=False):
-            images, masks = images.to(device), masks.to(device)
+        for batch in tqdm(val_loader, desc="Validation", leave=False):
+            images, masks = batch["image"].to(device), batch["label"].to(device)
             outputs = model(images)
 
             loss = loss_fn(outputs, masks)
