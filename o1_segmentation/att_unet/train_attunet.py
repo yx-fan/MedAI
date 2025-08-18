@@ -162,8 +162,23 @@ for epoch in trange(num_epochs, desc="Total Progress"):
 
     # 聚合指标
     avg_val_loss = val_loss / max(1, len(val_loader))
-    fg_dice_tensor = dice_metric.aggregate()     # 张量，已按 reduction="mean"
-    fg_dice = float(fg_dice_tensor.item())
+    res = dice_metric.aggregate()
+
+    # 兼容不同 MONAI 版本：可能返回 tensor 或 (tensor, not_nans)
+    if isinstance(res, (tuple, list)) and len(res) == 2:
+        fg_dice_tensor, not_nans = res
+        # 统计有效样本数（可选）
+        try:
+            valid = int((not_nans if torch.is_tensor(not_nans) else torch.tensor(not_nans)).sum().item())
+        except Exception:
+            valid = None
+    else:
+        fg_dice_tensor = res
+        valid = None
+
+    # 无论是标量还是向量，都稳妥取均值再转 float
+    fg_dice = float(torch.as_tensor(fg_dice_tensor).mean().item())
+
     # 可选：统计有效样本数（有前景的）
     try:
         valid = int(dice_metric.get_buffer("not_nans").sum().item())
