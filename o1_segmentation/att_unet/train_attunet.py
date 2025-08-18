@@ -132,7 +132,7 @@ for epoch in trange(num_epochs, desc="Total Progress"):
     # -------- Validation --------
     model.eval()
     val_loss = 0.0
-    fg_dices = []  # 存每个 batch 的前景 Dice
+    fg_dices = []
     with torch.no_grad():
         for step, batch in enumerate(tqdm(val_loader, desc="Validation", leave=False)):
             images, masks = batch["image"].to(device), batch["label"].to(device)
@@ -146,18 +146,17 @@ for epoch in trange(num_epochs, desc="Total Progress"):
                     overlap=0.25
                 )
                 loss = loss_fn(outputs, masks)
-
             val_loss += loss.item()
 
-            # 后处理
+            # 后处理 (to one-hot)
             outputs = post_pred(outputs).cpu()
             masks = post_label(masks).cpu()
 
-            # 手动算 FG Dice
-            intersection = (outputs[:,1] * masks[:,1]).sum().item()
-            pred_sum = outputs[:,1].sum().item()
-            label_sum = masks[:,1].sum().item()
-            denom = pred_sum + label_sum
+            # 只算前景 Dice
+            pred_fg = outputs[:, 1]
+            gt_fg   = masks[:, 1]
+            intersection = (pred_fg * gt_fg).sum().item()
+            denom = pred_fg.sum().item() + gt_fg.sum().item()
             if denom > 0:
                 fg_dices.append(2.0 * intersection / denom)
 
