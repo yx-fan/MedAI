@@ -133,7 +133,8 @@ for epoch in trange(num_epochs, desc="Total Progress"):
 
             if step < 2:  # 打印前2个验证 batch 的 dice
                 batch_dice = DiceMetric(include_background=False, reduction="mean")(y_pred=outputs, y=masks)
-                print(f"[Val][Batch {step}] Loss: {loss.item():.4f}, Dice: {batch_dice.item():.4f}")
+                print(f"[Val][Batch {step}] Loss: {loss.item():.4f}, Dice: {batch_dice.tolist()}")
+
 
     avg_val_loss = val_loss / len(val_loader)
     dice_score = dice_metric.aggregate().item()
