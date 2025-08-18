@@ -153,15 +153,15 @@ for epoch in trange(num_epochs, desc="Total Progress"):
             outputs = post_pred(outputs).cpu()
             masks = post_label(masks).cpu()
 
-            # 只在有前景的样本上计算 fg Dice
-            if masks[:, 1].sum() > 0:  # mask 的前景通道有 voxel
+            # 判断是否有前景
+            if masks.max() > 0:
                 dice_metric(y_pred=outputs, y=masks)
                 num_fg_cases += 1
 
             # 打印部分 batch Dice
             if step < 2:
                 tmp_metric = DiceMetric(include_background=True, reduction="none")
-                if masks[:, 1].sum() > 0:
+                if masks.max() > 0:
                     tmp_metric(y_pred=outputs, y=masks)
                     dice_values = tmp_metric.aggregate().cpu().numpy().tolist()
                     tmp_metric.reset()
@@ -191,7 +191,7 @@ for epoch in trange(num_epochs, desc="Total Progress"):
     lr_now = scheduler.get_last_lr()[0]
     with open(log_path, "a", newline="") as f:
         writer = csv.writer(f)
-        writer.writerow([epoch+1, avg_train_loss, avg_val_loss, fg_dice, bg_dice, lr_now])
+        writer.writerow([epoch+1, avg_train_loss, avg_val_loss, fg_dice, bg_dice, mean_dice, lr_now])
 
     # -------- Save Models --------
     latest_path = os.path.join(save_dir, "latest_model.pth")
