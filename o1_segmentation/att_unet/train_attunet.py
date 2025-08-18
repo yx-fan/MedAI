@@ -71,8 +71,8 @@ warmup = LinearLR(optimizer, start_factor=1e-2, total_iters=5)
 cosine = CosineAnnealingLR(optimizer, T_max=num_epochs, eta_min=1e-6)
 scheduler = SequentialLR(optimizer, schedulers=[warmup, cosine], milestones=[5])
 
-# Dice metric (per-class, accumulate over val set)
-dice_metric = DiceMetric(include_background=True, reduction="none")
+# Dice metric (只统计前景)
+dice_metric = DiceMetric(include_background=False, reduction="mean", get_not_nans=False)
 
 # ==============================
 # AMP (混合精度)
@@ -85,7 +85,7 @@ scaler = torch.amp.GradScaler("cuda", enabled=(device.type == "cuda"))
 log_path = os.path.join(save_dir, "train_log.csv")
 with open(log_path, "w", newline="") as f:
     writer = csv.writer(f)
-    writer.writerow(["epoch", "train_loss", "val_loss", "fg_dice", "bg_dice", "lr"])
+    writer.writerow(["epoch", "train_loss", "val_loss", "fg_dice", "lr"])
 
 # ==============================
 # Helper: GPU memory logger
@@ -158,7 +158,7 @@ for epoch in trange(num_epochs, desc="Total Progress"):
                 dice_metric(y_pred=outputs, y=masks)
                 num_fg_cases += 1
 
-            # 打印部分 batch Dice
+            # Debug 打印前几个 batch 的 bg/fg Dice
             if step < 2:
                 tmp_metric = DiceMetric(include_background=True, reduction="none")
                 if masks.max() > 0:
@@ -171,27 +171,18 @@ for epoch in trange(num_epochs, desc="Total Progress"):
 
     avg_val_loss = val_loss / len(val_loader)
 
-    # 最终 Dice（只统计有前景的样本）
-    dice_scores = dice_metric.aggregate().cpu().numpy()
+    # 最终只统计前景 Dice
+    fg_dice = float(dice_metric.aggregate().cpu().numpy())
     dice_metric.reset()
 
-    # 兼容 batch 输出
-    if dice_scores.ndim == 2:
-        dice_scores = dice_scores.mean(axis=0)
-
-    bg_dice, fg_dice = float(dice_scores[0]), float(dice_scores[1])
-    mean_dice = (bg_dice + fg_dice) / 2.0
-
-    print(f"Val Loss: {avg_val_loss:.4f}, "
-        f"FG Dice={fg_dice:.4f}, BG Dice={bg_dice:.4f}, Mean Dice={mean_dice:.4f}, "
-        f"(FG cases used: {num_fg_cases})")
+    print(f"Val Loss: {avg_val_loss:.4f}, FG Dice={fg_dice:.4f}, (FG cases used: {num_fg_cases})")
     log_gpu("After Validation")
 
     # -------- Save Logs --------
     lr_now = scheduler.get_last_lr()[0]
     with open(log_path, "a", newline="") as f:
         writer = csv.writer(f)
-        writer.writerow([epoch+1, avg_train_loss, avg_val_loss, fg_dice, bg_dice, mean_dice, lr_now])
+        writer.writerow([epoch+1, avg_train_loss, avg_val_loss, fg_dice, lr_now])
 
     # -------- Save Models --------
     latest_path = os.path.join(save_dir, "latest_model.pth")
@@ -200,10 +191,9 @@ for epoch in trange(num_epochs, desc="Total Progress"):
         "model": model.state_dict(),
         "optimizer": optimizer.state_dict(),
         "fg_dice": fg_dice,
-        "bg_dice": bg_dice,
     }, latest_path)
 
-    if fg_dice > best_dice:  # 用前景 Dice 作为 early stopping
+    if fg_dice > best_dice:  # 用前景 Dice 作为早停指标
         best_dice = fg_dice
         best_path = os.path.join(save_dir, "best_model.pth")
         torch.save(model.state_dict(), best_path)
