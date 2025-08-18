@@ -147,7 +147,7 @@ for epoch in trange(num_epochs, desc="Total Progress"):
     dice_scores = dice_metric.aggregate().cpu().numpy()  # [bg_dice, fg_dice]
     bg_dice, fg_dice = dice_scores[0], dice_scores[1]
     dice_metric.reset()
-    print(f"Val Loss: {avg_val_loss:.4f}, Dice (bg={bg_dice:.4f}, fg={fg_dice:.4f})")
+    print(f"Val Loss: {avg_val_loss:.4f}, Dice (bg={bg_dice.mean():.4f}, fg={fg_dice.mean():.4f})")
     log_gpu("After Validation")
 
     # -------- Save Logs --------
