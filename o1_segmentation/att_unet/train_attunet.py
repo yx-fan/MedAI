@@ -132,6 +132,7 @@ for epoch in trange(num_epochs, desc="Total Progress"):
     # -------- Validation --------
     model.eval()
     val_loss = 0.0
+    num_fg_cases = 0  # 有前景的样本数
     with torch.no_grad():
         for step, batch in enumerate(tqdm(val_loader, desc="Validation", leave=False)):
             images, masks = batch["image"].to(device), batch["label"].to(device)
@@ -148,20 +149,29 @@ for epoch in trange(num_epochs, desc="Total Progress"):
 
             val_loss += loss.item()
 
-            # accumulate
+            # 后处理
             outputs = post_pred(outputs).cpu()
             masks = post_label(masks).cpu()
-            dice_metric(y_pred=outputs, y=masks)
+
+            # 只在有前景的样本上计算 fg Dice
+            if masks[:, 1].sum() > 0:  # mask 的前景通道有 voxel
+                dice_metric(y_pred=outputs, y=masks)
+                num_fg_cases += 1
 
             # 打印部分 batch Dice
             if step < 2:
                 tmp_metric = DiceMetric(include_background=True, reduction="none")
-                tmp_metric(y_pred=outputs, y=masks)
-                dice_values = tmp_metric.aggregate().cpu().numpy().tolist()
-                tmp_metric.reset()
-                print(f"[Val][Batch {step}] Dice per class [bg, fg]: {dice_values}")
+                if masks[:, 1].sum() > 0:
+                    tmp_metric(y_pred=outputs, y=masks)
+                    dice_values = tmp_metric.aggregate().cpu().numpy().tolist()
+                    tmp_metric.reset()
+                    print(f"[Val][Batch {step}] Dice per class [bg, fg]: {dice_values}")
+                else:
+                    print(f"[Val][Batch {step}] skipped (no foreground in GT)")
 
     avg_val_loss = val_loss / len(val_loader)
+
+    # 最终 Dice（只统计有前景的样本）
     dice_scores = dice_metric.aggregate().cpu().numpy()
     dice_metric.reset()
 
@@ -170,8 +180,11 @@ for epoch in trange(num_epochs, desc="Total Progress"):
         dice_scores = dice_scores.mean(axis=0)
 
     bg_dice, fg_dice = float(dice_scores[0]), float(dice_scores[1])
+    mean_dice = (bg_dice + fg_dice) / 2.0
 
-    print(f"Val Loss: {avg_val_loss:.4f}, Dice (bg={bg_dice:.4f}, fg={fg_dice:.4f})")
+    print(f"Val Loss: {avg_val_loss:.4f}, "
+        f"FG Dice={fg_dice:.4f}, BG Dice={bg_dice:.4f}, Mean Dice={mean_dice:.4f}, "
+        f"(FG cases used: {num_fg_cases})")
     log_gpu("After Validation")
 
     # -------- Save Logs --------
