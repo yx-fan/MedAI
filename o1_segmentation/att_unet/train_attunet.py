@@ -9,8 +9,12 @@ from monai.networks.nets import AttentionUnet
 from monai.losses import DiceCELoss
 from monai.metrics import DiceMetric
 from monai.inferers import sliding_window_inference
+from monai.transforms import AsDiscrete
 from tqdm import tqdm, trange
-from data_loader import get_dataloaders  # reuse your existing dataloader
+from data_loader import get_dataloaders
+
+post_pred = AsDiscrete(argmax=True, to_onehot=2)
+post_label = AsDiscrete(to_onehot=2)
 
 # ==============================
 # Configuration
@@ -30,7 +34,7 @@ best_dice = -1.0
 train_loader, val_loader = get_dataloaders(data_dir="./data/raw", batch_size=2)
 
 # ==============================
-# Model Definition (3D Attention UNet)
+# Model Definition
 # ==============================
 model = AttentionUnet(
     spatial_dims=3,
@@ -62,17 +66,26 @@ with open(log_path, "w", newline="") as f:
     writer.writerow(["epoch", "train_loss", "val_loss", "dice_score", "lr"])
 
 # ==============================
+# Helper: GPU memory logger
+# ==============================
+def log_gpu(stage: str):
+    if device.type == "cuda":
+        mem = torch.cuda.memory_allocated(device) / 1024**2
+        print(f"[GPU] {stage} | Allocated: {mem:.2f} MB")
+
+# ==============================
 # Training Loop
 # ==============================
 start_time = time.time()
 for epoch in trange(num_epochs, desc="Total Progress"):
     epoch_start = time.time()
     print(f"\n[Epoch {epoch+1}/{num_epochs}]")
+    log_gpu("Start Epoch")
 
     # -------- Training --------
     model.train()
     train_loss = 0.0
-    for batch in tqdm(train_loader, desc="Training", leave=False):
+    for step, batch in enumerate(tqdm(train_loader, desc="Training", leave=False)):
         images, masks = batch["image"].to(device), batch["label"].to(device)
 
         optimizer.zero_grad()
@@ -86,17 +99,21 @@ for epoch in trange(num_epochs, desc="Total Progress"):
 
         train_loss += loss.item()
 
+        if step < 3:  # 只打印前3个 batch，避免刷屏
+            print(f"[Train][Batch {step}] Loss: {loss.item():.4f}")
+            log_gpu(f"After Batch {step}")
+
     avg_train_loss = train_loss / len(train_loader)
     print(f"Train Loss: {avg_train_loss:.4f}")
+    log_gpu("After Training")
 
     # -------- Validation --------
     model.eval()
     val_loss = 0.0
     with torch.no_grad():
-        for batch in tqdm(val_loader, desc="Validation", leave=False):
+        for step, batch in enumerate(tqdm(val_loader, desc="Validation", leave=False)):
             images, masks = batch["image"].to(device), batch["label"].to(device)
 
-            # ✅ 滑窗推理
             with torch.amp.autocast("cuda", enabled=(device.type == "cuda")):
                 outputs = sliding_window_inference(
                     images, roi_size=(160, 160, 64),
@@ -105,12 +122,21 @@ for epoch in trange(num_epochs, desc="Total Progress"):
                 loss = loss_fn(outputs, masks)
 
             val_loss += loss.item()
+
+            # ✅ detach & move to CPU，避免显存逐轮增加
+            outputs = post_pred(outputs).cpu()
+            masks = post_label(masks).cpu()
             dice_metric(y_pred=outputs, y=masks)
+
+            if step < 2:  # 打印前2个验证 batch 的 dice
+                batch_dice = DiceMetric(include_background=False, reduction="mean")(y_pred=outputs, y=masks)
+                print(f"[Val][Batch {step}] Loss: {loss.item():.4f}, Dice: {batch_dice.item():.4f}")
 
     avg_val_loss = val_loss / len(val_loader)
     dice_score = dice_metric.aggregate().item()
     dice_metric.reset()
     print(f"Val Loss: {avg_val_loss:.4f}, Dice: {dice_score:.4f}")
+    log_gpu("After Validation")
 
     # -------- Save Logs --------
     lr_now = scheduler.get_last_lr()[0]
