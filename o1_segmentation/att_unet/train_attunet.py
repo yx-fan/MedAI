@@ -10,6 +10,7 @@ from monai.losses import DiceFocalLoss
 from monai.metrics import DiceMetric
 from monai.inferers import sliding_window_inference
 from monai.transforms import AsDiscrete
+from monai.data import decollate_batch
 import torch.backends.cudnn as cudnn
 from tqdm import tqdm, trange
 from data_loader import get_dataloaders
@@ -72,7 +73,7 @@ cosine = CosineAnnealingLR(optimizer, T_max=num_epochs, eta_min=1e-6)
 scheduler = SequentialLR(optimizer, schedulers=[warmup, cosine], milestones=[5])
 
 # Dice metric (只统计前景)
-dice_metric = DiceMetric(include_background=False, reduction="mean", get_not_nans=False)
+dice_metric = DiceMetric(include_background=False, reduction="mean", get_not_nans=True)
 
 # ==============================
 # AMP (混合精度)
@@ -130,14 +131,17 @@ for epoch in trange(num_epochs, desc="Total Progress"):
     print(f"Train Loss: {avg_train_loss:.4f}")
     log_gpu("After Training")
 
-    # -------- Validation --------
+    # -------- Validation（完整替换该段）--------
     model.eval()
     val_loss = 0.0
-    fg_dices = []
+
+    # 重置 metric
+    dice_metric.reset()
+
     with torch.no_grad():
         for step, batch in enumerate(tqdm(val_loader, desc="Validation", leave=False)):
             images = batch["image"].to(device)
-            masks  = batch["label"].to(device).long()   # ✅ 显式转为 long
+            masks  = batch["label"].to(device).long()  # ✅
 
             with torch.amp.autocast("cuda", enabled=(device.type == "cuda")):
                 outputs = sliding_window_inference(
@@ -147,33 +151,29 @@ for epoch in trange(num_epochs, desc="Total Progress"):
                     predictor=model,
                     overlap=0.25
                 )
-                loss = loss_fn(outputs, masks)          # ✅ 与训练一致
+                loss = loss_fn(outputs, masks)         # ✅ 与训练一致
 
             val_loss += loss.item()
 
-            # --- 预测后处理：argmax + one-hot (2 通道) ---
-            outputs_oh = post_pred(outputs).cpu().float()  # [B,2,H,W,D]
+            # decollate -> 后处理 -> 累计到 DiceMetric
+            y_pred_list = [post_pred(o) for o in decollate_batch(outputs)]
+            y_list      = [post_label(y) for y in decollate_batch(masks)]
+            dice_metric(y_pred=y_pred_list, y=y_list)
 
-            # --- GT 显式 one-hot（不依赖 AsDiscrete 对 label）---
-            # masks: [B,1,H,W,D] int, squeeze -> [B,H,W,D]
-            gt_oh = torch.nn.functional.one_hot(masks.squeeze(1), num_classes=2)  # [B,H,W,D,2]
-            gt_oh = gt_oh.permute(0, 4, 1, 2, 3).contiguous().cpu().float()       # [B,2,H,W,D]
+    # 聚合指标
+    avg_val_loss = val_loss / max(1, len(val_loader))
+    fg_dice_tensor = dice_metric.aggregate()     # 张量，已按 reduction="mean"
+    fg_dice = float(fg_dice_tensor.item())
+    # 可选：统计有效样本数（有前景的）
+    try:
+        valid = int(dice_metric.get_buffer("not_nans").sum().item())
+    except Exception:
+        valid = None
 
-            # --- 前景通道 ---
-            pred_fg = outputs_oh[:, 1, ...]   # [B,H,W,D]
-            gt_fg   = gt_oh[:, 1, ...]        # [B,H,W,D]
-
-            # --- Dice 计算 ---
-            intersection = (pred_fg * gt_fg).sum().item()
-            denom = pred_fg.sum().item() + gt_fg.sum().item()
-            if denom > 0:
-                fg_dices.append(2.0 * intersection / denom)
-
-    # --- 平均 ---
-    avg_val_loss = val_loss / len(val_loader)
-    fg_dice = sum(fg_dices) / len(fg_dices) if fg_dices else 0.0
-
-    print(f"Val Loss: {avg_val_loss:.4f}, FG Dice={fg_dice:.4f}, (FG cases used: {len(fg_dices)})")
+    if valid is not None:
+        print(f"Val Loss: {avg_val_loss:.4f}, FG Dice={fg_dice:.4f}, (valid cases: {valid})")
+    else:
+        print(f"Val Loss: {avg_val_loss:.4f}, FG Dice={fg_dice:.4f}")
     log_gpu("After Validation")
 
     # -------- Save Logs --------
