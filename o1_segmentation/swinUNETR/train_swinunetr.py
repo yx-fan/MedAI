@@ -4,12 +4,12 @@ import csv
 import time
 import torch
 from torch.optim import AdamW
+from torch.optim.lr_scheduler import CosineAnnealingLR
 from monai.networks.nets import SwinUNETR
 from monai.losses import DiceCELoss
 from monai.metrics import DiceMetric
 from monai.inferers import sliding_window_inference
 from tqdm import tqdm, trange
-
 from data_loader import get_dataloaders
 
 # ==============================
@@ -44,14 +44,15 @@ model = SwinUNETR(
 ).to(device)
 
 # ==============================
-# Loss / Optimizer / Metrics
+# Loss / Optimizer / Scheduler / Metrics
 # ==============================
 loss_fn = DiceCELoss(to_onehot_y=True, softmax=True)
 optimizer = AdamW(model.parameters(), lr=learning_rate, weight_decay=1e-5)
-dice_metric = DiceMetric(include_background=False, reduction="mean")
+scheduler = CosineAnnealingLR(optimizer, T_max=num_epochs, eta_min=1e-6)
+dice_metric = DiceMetric(include_background=False, reduction="mean_batch")
 
-# ✅ 混合精度工具
-scaler = torch.cuda.amp.GradScaler(enabled=(device.type == "cuda"))
+# ✅ 混合精度工具 (新写法)
+scaler = torch.amp.GradScaler("cuda", enabled=(device.type == "cuda"))
 
 # ==============================
 # CSV Logger
@@ -59,7 +60,7 @@ scaler = torch.cuda.amp.GradScaler(enabled=(device.type == "cuda"))
 log_path = os.path.join(save_dir, "train_log.csv")
 with open(log_path, "w", newline="") as f:
     writer = csv.writer(f)
-    writer.writerow(["epoch", "train_loss", "val_loss", "dice_score"])
+    writer.writerow(["epoch", "train_loss", "val_loss", "dice_score", "lr"])
 
 # ==============================
 # Training Loop
@@ -76,8 +77,7 @@ for epoch in trange(num_epochs, desc="Total Progress"):
         images, masks = batch["image"].to(device), batch["label"].to(device)
 
         optimizer.zero_grad()
-
-        with torch.cuda.amp.autocast(enabled=(device.type == "cuda")):
+        with torch.amp.autocast("cuda", enabled=(device.type == "cuda")):
             outputs = model(images)
             loss = loss_fn(outputs, masks)
 
@@ -92,14 +92,15 @@ for epoch in trange(num_epochs, desc="Total Progress"):
 
     # ---- Validation ----
     model.eval()
-    val_loss, dice_score = 0.0, 0.0
+    val_loss = 0.0
     with torch.no_grad():
         for batch in tqdm(val_loader, desc="Validation", leave=False):
             images, masks = batch["image"].to(device), batch["label"].to(device)
 
-            with torch.cuda.amp.autocast(enabled=(device.type == "cuda")):
+            with torch.amp.autocast("cuda", enabled=(device.type == "cuda")):
                 outputs = sliding_window_inference(
-                    images, roi_size=(160, 160, 64), sw_batch_size=1, predictor=model, overlap=0.25
+                    images, roi_size=(160, 160, 64),
+                    sw_batch_size=1, predictor=model, overlap=0.25
                 )
                 loss = loss_fn(outputs, masks)
 
@@ -109,21 +110,36 @@ for epoch in trange(num_epochs, desc="Total Progress"):
     avg_val_loss = val_loss / len(val_loader)
     dice_score = dice_metric.aggregate().item()
     dice_metric.reset()
+    print(f"Val Loss: {avg_val_loss:.4f}, Dice: {dice_score:.4f}")
 
     # ---- Save Logs ----
+    lr_now = scheduler.get_last_lr()[0]
     with open(log_path, "a", newline="") as f:
         writer = csv.writer(f)
-        writer.writerow([epoch+1, avg_train_loss, avg_val_loss, dice_score])
+        writer.writerow([epoch+1, avg_train_loss, avg_val_loss, dice_score, lr_now])
 
     # ---- Save Models ----
-    torch.save(model.state_dict(), os.path.join(save_dir, "latest_model.pth"))
+    latest_path = os.path.join(save_dir, "latest_model.pth")
+    torch.save({
+        "epoch": epoch + 1,
+        "model": model.state_dict(),
+        "optimizer": optimizer.state_dict(),
+        "dice": dice_score,
+    }, latest_path)
+
     if dice_score > best_dice:
         best_dice = dice_score
-        torch.save(model.state_dict(), os.path.join(save_dir, "best_model.pth"))
-        print(f"[INFO] Best model updated (Dice={best_dice:.4f})")
+        best_path = os.path.join(save_dir, "best_model.pth")
+        torch.save(model.state_dict(), best_path)
+        print(f"[INFO] Best model updated: {best_path} (Dice={best_dice:.4f})")
+
     if epoch == num_epochs - 1:
-        torch.save(model.state_dict(), os.path.join(save_dir, "final_model.pth"))
-        print("[INFO] Final model saved")
+        final_path = os.path.join(save_dir, "final_model.pth")
+        torch.save(model.state_dict(), final_path)
+        print(f"[INFO] Final model saved: {final_path}")
+
+    # ---- Scheduler Step ----
+    scheduler.step()
 
     # ---- ETA ----
     epoch_time = time.time() - epoch_start

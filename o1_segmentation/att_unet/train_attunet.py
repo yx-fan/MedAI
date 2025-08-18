@@ -1,11 +1,14 @@
+# train_attunet.py
 import os
 import csv
 import time
 import torch
 from torch.optim import AdamW
+from torch.optim.lr_scheduler import CosineAnnealingLR
 from monai.networks.nets import AttentionUnet
 from monai.losses import DiceCELoss
 from monai.metrics import DiceMetric
+from monai.inferers import sliding_window_inference
 from tqdm import tqdm, trange
 from data_loader import get_dataloaders  # reuse your existing dataloader
 
@@ -42,7 +45,13 @@ model = AttentionUnet(
 # ==============================
 loss_fn = DiceCELoss(to_onehot_y=True, softmax=True)
 optimizer = AdamW(model.parameters(), lr=learning_rate, weight_decay=1e-5)
-dice_metric = DiceMetric(include_background=False, reduction="mean")
+scheduler = CosineAnnealingLR(optimizer, T_max=num_epochs, eta_min=1e-6)
+dice_metric = DiceMetric(include_background=False, reduction="mean_batch")
+
+# ==============================
+# AMP (混合精度)
+# ==============================
+scaler = torch.amp.GradScaler("cuda", enabled=(device.type == "cuda"))
 
 # ==============================
 # CSV Logger
@@ -50,7 +59,7 @@ dice_metric = DiceMetric(include_background=False, reduction="mean")
 log_path = os.path.join(save_dir, "train_log.csv")
 with open(log_path, "w", newline="") as f:
     writer = csv.writer(f)
-    writer.writerow(["epoch", "train_loss", "val_loss", "dice_score"])
+    writer.writerow(["epoch", "train_loss", "val_loss", "dice_score", "lr"])
 
 # ==============================
 # Training Loop
@@ -67,11 +76,14 @@ for epoch in trange(num_epochs, desc="Total Progress"):
         images, masks = batch["image"].to(device), batch["label"].to(device)
 
         optimizer.zero_grad()
-        outputs = model(images)
+        with torch.amp.autocast("cuda", enabled=(device.type == "cuda")):
+            outputs = model(images)
+            loss = loss_fn(outputs, masks)
 
-        loss = loss_fn(outputs, masks)
-        loss.backward()
-        optimizer.step()
+        scaler.scale(loss).backward()
+        scaler.step(optimizer)
+        scaler.update()
+
         train_loss += loss.item()
 
     avg_train_loss = train_loss / len(train_loader)
@@ -83,9 +95,15 @@ for epoch in trange(num_epochs, desc="Total Progress"):
     with torch.no_grad():
         for batch in tqdm(val_loader, desc="Validation", leave=False):
             images, masks = batch["image"].to(device), batch["label"].to(device)
-            outputs = model(images)
 
-            loss = loss_fn(outputs, masks)
+            # ✅ 滑窗推理
+            with torch.amp.autocast("cuda", enabled=(device.type == "cuda")):
+                outputs = sliding_window_inference(
+                    images, roi_size=(160, 160, 64),
+                    sw_batch_size=1, predictor=model, overlap=0.25
+                )
+                loss = loss_fn(outputs, masks)
+
             val_loss += loss.item()
             dice_metric(y_pred=outputs, y=masks)
 
@@ -95,13 +113,19 @@ for epoch in trange(num_epochs, desc="Total Progress"):
     print(f"Val Loss: {avg_val_loss:.4f}, Dice: {dice_score:.4f}")
 
     # -------- Save Logs --------
+    lr_now = scheduler.get_last_lr()[0]
     with open(log_path, "a", newline="") as f:
         writer = csv.writer(f)
-        writer.writerow([epoch+1, avg_train_loss, avg_val_loss, dice_score])
+        writer.writerow([epoch+1, avg_train_loss, avg_val_loss, dice_score, lr_now])
 
     # -------- Save Models --------
     latest_path = os.path.join(save_dir, "latest_model.pth")
-    torch.save(model.state_dict(), latest_path)
+    torch.save({
+        "epoch": epoch + 1,
+        "model": model.state_dict(),
+        "optimizer": optimizer.state_dict(),
+        "dice": dice_score,
+    }, latest_path)
 
     if dice_score > best_dice:
         best_dice = dice_score
@@ -113,6 +137,9 @@ for epoch in trange(num_epochs, desc="Total Progress"):
         final_path = os.path.join(save_dir, "final_model.pth")
         torch.save(model.state_dict(), final_path)
         print(f"[INFO] Final model saved: {final_path}")
+
+    # -------- Scheduler Step --------
+    scheduler.step()
 
     # -------- ETA --------
     epoch_time = time.time() - epoch_start
