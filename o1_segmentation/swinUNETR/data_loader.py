@@ -1,3 +1,4 @@
+# data_loader.py
 import os
 import glob
 from torch.utils.data import DataLoader
@@ -16,7 +17,7 @@ from monai.data import Dataset
 
 def get_dataloaders(data_dir="./data/raw", batch_size=2, patch_size=(160, 160, 64)):
     """
-    Create train and validation dataloaders for rectal cancer segmentation.
+    Create train and validation dataloaders for rectal cancer CT segmentation.
     """
     # Collect files
     images = sorted(glob.glob(os.path.join(data_dir, "images", "*.nii.gz")))
@@ -33,16 +34,16 @@ def get_dataloaders(data_dir="./data/raw", batch_size=2, patch_size=(160, 160, 6
     train_transforms = Compose([
         LoadImaged(keys=["image", "label"]),
         EnsureChannelFirstd(keys=["image", "label"]),
-        Spacingd(keys=["image", "label"], pixdim=(1.0, 1.0, 3.0), mode=("bilinear", "nearest")),  # ✅ 统一 spacing
-        ScaleIntensityRanged(keys=["image"], a_min=-200, a_max=250, b_min=0.0, b_max=1.0, clip=True),  # ✅ CT HU 范围
+        Spacingd(keys=["image", "label"], pixdim=(1.0, 1.0, 3.0), mode=("bilinear", "nearest")),
+        ScaleIntensityRanged(keys=["image"], a_min=-200, a_max=250, b_min=0.0, b_max=1.0, clip=True),
         RandCropByPosNegLabeld(
             keys=["image", "label"],
             label_key="label",
             spatial_size=patch_size,
-            pos=1, neg=1, num_samples=2,  # 一半有肿瘤/直肠, 一半背景
+            pos=1, neg=1, num_samples=2,
         ),
-        RandFlipd(keys=["image", "label"], prob=0.5, spatial_axis=[0]),   # 左右翻转
-        RandRotate90d(keys=["image", "label"], prob=0.5, max_k=3),        # 随机旋转
+        RandFlipd(keys=["image", "label"], prob=0.5, spatial_axis=[0]),
+        RandRotate90d(keys=["image", "label"], prob=0.5, max_k=3),
         EnsureTyped(keys=["image", "label"]),
     ])
 
