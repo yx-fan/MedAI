@@ -3,7 +3,7 @@ from typing import Tuple, List, Dict
 from torch.utils.data import DataLoader
 from monai.transforms import (
     Compose, LoadImaged, EnsureChannelFirstd, Spacingd, ScaleIntensityRanged,
-    CropForegroundd, RandCropByPosNegLabeld, RandFlipd, RandRotate90d, EnsureTyped
+    CropForegroundd, RandCropByPosNegLabeld, RandFlipd, RandRotate90d, EnsureTyped, SpatialPadd
 )
 from monai.data import CacheDataset, Dataset, list_data_collate
 
@@ -49,7 +49,7 @@ def get_dataloaders(
     # -------------------------
     # 形状/采样参数（与模型验证滑窗对齐）
     # -------------------------
-    patch_train = (96, 96, 64) if debug else (160, 160, 96)
+    patch_train = (48, 48, 24) if debug else (160, 160, 96)
     pixdim = (1.0, 1.0, 3.0)  # 你之前用的 spacing
     # 直肠癌极少前景：提高正样本比例与采样次数
     pos_samples, neg_samples, num_samples = 4, 1, 4
@@ -72,7 +72,9 @@ def get_dataloaders(
             neg=neg_samples,
             num_samples=num_samples,
             image_key="image",
+            allow_smaller=True,
         ),
+        SpatialPadd(keys=["image", "label"], spatial_size=patch_train),
         # 轻量增强（不破坏解剖一致性）
         RandFlipd(keys=["image", "label"], prob=0.5, spatial_axis=[0]),
         RandRotate90d(keys=["image", "label"], prob=0.5, max_k=3),

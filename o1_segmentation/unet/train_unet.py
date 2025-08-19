@@ -242,7 +242,7 @@ for epoch in trange(start_epoch, num_epochs, desc="Total Progress"):
             with torch.amp.autocast("cuda", enabled=(device.type == "cuda")):
                 outputs = sliding_window_inference(
                     images,
-                    roi_size=(160, 160, 96) if not args.debug else (96, 96, 64),
+                    roi_size=(160, 160, 96) if not args.debug else (48, 48, 24),
                     sw_batch_size=1 if args.debug else 2,
                     predictor=model,
                     overlap=0.5
