@@ -37,7 +37,7 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print(f"[INFO] Training on {device}")
 cudnn.benchmark = True
 
-base_epochs = 50 if not args.debug else 3
+base_epochs = 200 if not args.debug else 3
 num_epochs = base_epochs
 start_epoch = 0
 
