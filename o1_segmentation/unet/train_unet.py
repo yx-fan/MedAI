@@ -6,7 +6,7 @@ import argparse
 from torch.optim import AdamW
 from torch.optim.lr_scheduler import CosineAnnealingLR, LinearLR, SequentialLR
 from monai.networks.nets import UNet
-from monai.losses import FocalTverskyLoss, DiceCELoss
+from monai.losses import DiceCELoss, TverskyLoss
 from monai.metrics import DiceMetric
 from monai.inferers import sliding_window_inference
 from monai.transforms import AsDiscrete
@@ -64,33 +64,38 @@ strides  = (2, 2, 2)        if args.debug else (2, 2, 2, 2)
 model = UNet(
     spatial_dims=3,
     in_channels=1,
-    out_channels=2,                 # 背景+前景
+    out_channels=2,
     channels=channels,
     strides=strides,
-    num_res_units=3,                # 可按显存调为 2/1
+    num_res_units=3,
     norm="instance",
     act="PRELU",
     dropout=0.0
 ).to(device)
 
 # ==============================
-# Losses (① 课程式损失)
+# Losses（课程式：前期 DiceCE，后期 Tversky + DiceCE）
 # ==============================
-# 偏召回的小目标友好：FocalTversky
-loss_ft = FocalTverskyLoss(
-    include_background=False, to_onehot_y=True, softmax=True,
-    alpha=0.3, beta=0.7, gamma=1.33
+# 小目标友好：Tversky（偏向召回，beta>alpha）
+loss_tv = TverskyLoss(
+    include_background=False,
+    to_onehot_y=True,
+    softmax=True,
+    alpha=0.3,   # FP 权重
+    beta=0.7     # FN 权重（更重）
 )
 # 稳定语义与边界：Dice + 加权 CE
 ce_weight = torch.tensor([0.2, 0.8], device=device)  # [bg, fg]
 loss_dicece = DiceCELoss(
-    include_background=False, to_onehot_y=True, softmax=True,
+    include_background=False,
+    to_onehot_y=True,
+    softmax=True,
     ce_weight=ce_weight
 )
 CURRICULUM_EPOCHS = 15  # 前 15 个“当前会话 epoch”用 DiceCE 热身
 
 # ==============================
-# Optimizer & Scheduler (④ 对齐 last_epoch)
+# Optimizer & Scheduler
 # ==============================
 optimizer = AdamW(model.parameters(), lr=learning_rate, weight_decay=1e-5)
 warmup = LinearLR(optimizer, start_factor=1e-2, total_iters=5)
@@ -107,7 +112,7 @@ dice_metric = DiceMetric(include_background=False, reduction="mean", get_not_nan
 scaler = torch.amp.GradScaler("cuda", enabled=(device.type == "cuda"))
 
 # ==============================
-# (③) 输出层前景先验偏置（仅非 resume）
+# 输出层前景先验偏置（仅非 resume）
 # ==============================
 def init_pos_logit_bias(model, pos_prior=1e-3):
     """将最终前景通道的 bias 设为 ln(p/(1-p))，加速极小前景收敛。"""
@@ -124,7 +129,7 @@ def init_pos_logit_bias(model, pos_prior=1e-3):
             last_conv.bias[1].fill_(bias_val)
 
 # ==============================
-# Resume (optional)  + 重新对齐 scheduler (④)
+# Resume（并对齐 scheduler）
 # ==============================
 if args.resume:
     print(f"[INFO] Resuming from {args.resume}")
@@ -141,7 +146,7 @@ if args.resume:
         best_dice = float(ckpt.get("fg_dice", best_dice))
         print(f"[INFO] Loaded epoch={start_epoch}, prev_fg_dice={ckpt.get('fg_dice', None)}")
     else:
-        model.load_state_dict(ckpt)  # best 权重也可加载
+        model.load_state_dict(ckpt)
         start_epoch = 0
         print("[WARN] Loaded weights only (no optimizer state)")
 
@@ -151,13 +156,12 @@ if args.resume:
     num_epochs = total_epochs
     print(f"[INFO] Will train epochs [{start_epoch} -> {num_epochs})")
 
-    # 重建 scheduler（用总轮数），并把 last_epoch 对齐成 start_epoch-1
+    # 重建 scheduler，用总轮数对齐，并设置 last_epoch=start_epoch-1
     warmup = LinearLR(optimizer, start_factor=1e-2, total_iters=5)
     cosine = CosineAnnealingLR(optimizer, T_max=num_epochs, eta_min=1e-6)
     scheduler = SequentialLR(optimizer, schedulers=[warmup, cosine], milestones=[5])
     scheduler.last_epoch = start_epoch - 1
 else:
-    # 非 resume：初始化前景 logit 先验偏置（③）
     init_pos_logit_bias(model, pos_prior=1e-3)
     num_epochs = base_epochs
     start_epoch = 0
@@ -200,14 +204,14 @@ for epoch in trange(start_epoch, num_epochs, desc="Total Progress"):
         optimizer.zero_grad(set_to_none=True)
         with torch.amp.autocast("cuda", enabled=(device.type == "cuda")):
             outputs = model(images)
-            # ① 课程式损失：当前会话的相对 epoch
+            # 课程式损失：当前会话相对 epoch
             session_epoch = epoch - start_epoch
             if session_epoch < CURRICULUM_EPOCHS:
                 loss = loss_dicece(outputs, masks)
             else:
-                loss = 0.7 * loss_ft(outputs, masks) + 0.3 * loss_dicece(outputs, masks)
+                loss = 0.7 * loss_tv(outputs, masks) + 0.3 * loss_dicece(outputs, masks)
 
-        # ② 梯度裁剪（AMP 正确用法：先 unscale 再 clip）
+        # 梯度裁剪（AMP：先 unscale 再 clip）
         scaler.scale(loss).backward()
         scaler.unscale_(optimizer)
         torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
@@ -242,12 +246,12 @@ for epoch in trange(start_epoch, num_epochs, desc="Total Progress"):
                     predictor=model,
                     overlap=0.5
                 )
-                # 验证端沿用当前损失（仅用于监控，不影响指标）
+                # 验证端沿用当前损失（仅监控）
                 session_epoch = epoch - start_epoch
                 if session_epoch < CURRICULUM_EPOCHS:
                     loss = loss_dicece(outputs, masks)
                 else:
-                    loss = 0.7 * loss_ft(outputs, masks) + 0.3 * loss_dicece(outputs, masks)
+                    loss = 0.7 * loss_tv(outputs, masks) + 0.3 * loss_dicece(outputs, masks)
 
             val_loss += loss.item()
 
