@@ -87,10 +87,11 @@ loss_tv = TverskyLoss(
 # 稳定语义与边界：Dice + 加权 CE
 ce_weight = torch.tensor([0.2, 0.8], device=device)  # [bg, fg]
 loss_dicece = DiceCELoss(
-    include_background=False,
+    include_background=True,
     to_onehot_y=True,
     softmax=True,
-    ce_weight=ce_weight
+    lambda_dice=1.0,   # dice 部分的权重
+    lambda_ce=1.0,     # ce 部分的权重
 )
 CURRICULUM_EPOCHS = 15  # 前 15 个“当前会话 epoch”用 DiceCE 热身
 
