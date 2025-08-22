@@ -99,8 +99,8 @@ CURRICULUM_EPOCHS = 15  # 前 15 个“当前会话 epoch”用 DiceCE 热身
 # Optimizer & Scheduler
 # ==============================
 optimizer = AdamW(model.parameters(), lr=learning_rate, weight_decay=1e-5)
-warmup = LinearLR(optimizer, start_factor=1e-2, total_iters=5)
-cosine = CosineAnnealingLR(optimizer, T_max=base_epochs, eta_min=1e-6)
+warmup = LinearLR(optimizer, start_factor=1e-2, total_iters=15)
+cosine = CosineAnnealingLR(optimizer, T_max=base_epochs, eta_min=1e-5)
 scheduler = SequentialLR(optimizer, schedulers=[warmup, cosine], milestones=[5])
 scheduler.last_epoch = -1  # 新训练时从 -1 开始，下一次 step 即 0
 
