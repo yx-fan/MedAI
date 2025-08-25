@@ -1,0 +1,1 @@
+tensorboard --logdir=/home/xxli/MedAI/tb_logs --port=6006
