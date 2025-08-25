@@ -103,7 +103,7 @@ scheduler = SequentialLR(optimizer, schedulers=[warmup, cosine], milestones=[5])
 # Metrics
 # ==============================
 dice_metric = DiceMetric(include_background=False, reduction="none")
-hausdorff_metric = HausdorffDistanceMetric(include_background=False, reduction="mean", percentile=95, directed=True)
+# hausdorff_metric = HausdorffDistanceMetric(include_background=False, reduction="mean", percentile=95, directed=True)
 precision_metric = ConfusionMatrixMetric(metric_name="precision", reduction="mean", include_background=False)
 recall_metric = ConfusionMatrixMetric(metric_name="recall", reduction="mean", include_background=False)
 miou_metric = ConfusionMatrixMetric(metric_name="jaccard", reduction="mean", include_background=False)
@@ -157,7 +157,7 @@ with open(log_path, log_mode, newline="") as f:
     writer = csv.writer(f)
     if write_header:
         writer.writerow(["epoch", "train_loss", "val_loss", "fg_dice_mean", "fg_dice_std",
-                         "hausdorff_mean", "precision", "recall",
+                         "precision", "recall",
                          "specificity", "miou", "lr", "grad_norm"])
 
 # ==============================
@@ -224,7 +224,7 @@ for epoch in trange(start_epoch, num_epochs, desc="Total Progress"):
     model.eval()
     val_loss = 0.0
     dice_metric.reset()
-    hausdorff_metric.reset()
+    # hausdorff_metric.reset()
     precision_metric.reset()
     recall_metric.reset()
     miou_metric.reset()
@@ -250,7 +250,7 @@ for epoch in trange(start_epoch, num_epochs, desc="Total Progress"):
             y_pred_list = [post_pred(o) for o in decollate_batch(outputs)]
             y_list      = [post_label(y) for y in decollate_batch(masks)]
             dice_metric(y_pred=y_pred_list, y=y_list)
-            hausdorff_metric(y_pred=y_pred_list, y=y_list)
+            # hausdorff_metric(y_pred=y_pred_list, y=y_list)
             precision_metric(y_pred=y_pred_list, y=y_list)
             recall_metric(y_pred=y_pred_list, y=y_list)
             miou_metric(y_pred=y_pred_list, y=y_list)
@@ -258,10 +258,10 @@ for epoch in trange(start_epoch, num_epochs, desc="Total Progress"):
 
     avg_val_loss = val_loss / max(1, len(val_loader))
     dice_vals = dice_metric.aggregate()
-    hausdorff_vals = hausdorff_metric.aggregate()
+    # hausdorff_vals = hausdorff_metric.aggregate()
     fg_dice_mean = float(torch.as_tensor(dice_vals).mean().item())
     fg_dice_std = float(torch.as_tensor(dice_vals).std().item())
-    hausdorff_mean = float(torch.as_tensor(hausdorff_vals).mean().item())
+    # hausdorff_mean = float(torch.as_tensor(hausdorff_vals).mean().item())
     # hausdorff_max = float(torch.as_tensor(hausdorff_vals).max().item())
     precision_val = float(torch.as_tensor(precision_metric.aggregate()).mean().item())
     recall_val = float(torch.as_tensor(recall_metric.aggregate()).mean().item())
@@ -269,7 +269,6 @@ for epoch in trange(start_epoch, num_epochs, desc="Total Progress"):
     specificity_val = float(torch.as_tensor(specificity_metric.aggregate()).mean().item())
 
     print(f"Val Loss: {avg_val_loss:.4f}, Dice={fg_dice_mean:.4f}±{fg_dice_std:.4f}, "
-          f"Hausdorff={hausdorff_mean:.2f}, "
           f"Precision={precision_val:.4f}, Recall={recall_val:.4f}, Specificity={specificity_val:.4f}, mIoU={miou_val:.4f}")
     log_gpu("After Validation")
 
@@ -283,7 +282,7 @@ for epoch in trange(start_epoch, num_epochs, desc="Total Progress"):
         writer_csv.writerow([
             epoch+1, avg_train_loss, avg_val_loss,
             fg_dice_mean, fg_dice_std,
-            hausdorff_mean, precision_val, recall_val, specificity_val,
+            precision_val, recall_val, specificity_val,
             miou_val, lr_now, grad_norm
     ])
 
@@ -292,7 +291,7 @@ for epoch in trange(start_epoch, num_epochs, desc="Total Progress"):
     writer.add_scalar("Loss/val", avg_val_loss, epoch+1)
     writer.add_scalar("Dice/val_mean", fg_dice_mean, epoch+1)
     writer.add_scalar("Dice/val_std", fg_dice_std, epoch+1)
-    writer.add_scalar("Hausdorff/val_mean", hausdorff_mean, epoch+1)
+    # writer.add_scalar("Hausdorff/val_mean", hausdorff_mean, epoch+1)
     # writer.add_scalar("Hausdorff/val_max", hausdorff_max, epoch+1)
     writer.add_scalar("Precision/val", precision_val, epoch+1)
     writer.add_scalar("Recall/val", recall_val, epoch+1)
@@ -306,7 +305,7 @@ for epoch in trange(start_epoch, num_epochs, desc="Total Progress"):
         "Loss/val": avg_val_loss,
         "Dice/val_mean": fg_dice_mean,
         "Dice/val_std": fg_dice_std,
-        "Hausdorff/val_mean": hausdorff_mean,
+        # "Hausdorff/val_mean": hausdorff_mean,
         # "Hausdorff/val_max": hausdorff_max,
         "Precision/val": precision_val,
         "Recall/val": recall_val,
