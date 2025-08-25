@@ -12,12 +12,19 @@ def analyze_intensity_range(data_dir="./data/raw/images"):
     all_mins, all_maxs = [], []
 
     for f in nii_files:
-        img = nib.load(f)
-        data = img.get_fdata().astype(np.float32).flatten()
+        try:
+            img = nib.load(f)
+            data = img.get_fdata().astype(np.float32).flatten()
 
-        case_min, case_max = data.min(), data.max()
-        all_mins.append(case_min)
-        all_maxs.append(case_max)
+            case_min, case_max = data.min(), data.max()
+            all_mins.append(case_min)
+            all_maxs.append(case_max)
+
+            # print every case
+            print(f"{os.path.basename(f)} -> min={case_min:.1f}, max={case_max:.1f}")
+
+        except Exception as e:
+            print(f"⚠️ Failed to read {f}: {e}")
 
     all_mins = np.array(all_mins)
     all_maxs = np.array(all_maxs)
