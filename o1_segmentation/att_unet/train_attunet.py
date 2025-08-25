@@ -59,7 +59,8 @@ wandb.init(
         "batch_size": 2 if args.debug else 4,
         "learning_rate": learning_rate,
         "architecture": "AttentionUNet"
-    }
+    },
+    settings=wandb.Settings(init_timeout=300, start_method="thread")
 )
 
 # ==============================
