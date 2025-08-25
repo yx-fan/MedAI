@@ -103,7 +103,7 @@ scheduler = SequentialLR(optimizer, schedulers=[warmup, cosine], milestones=[5])
 # Metrics
 # ==============================
 dice_metric = DiceMetric(include_background=False, reduction="none")
-hausdorff_metric = HausdorffDistanceMetric(include_background=False, reduction="none", percentile=95, approximate=True)
+hausdorff_metric = HausdorffDistanceMetric(include_background=False, reduction="mean", percentile=95, directed=True)
 precision_metric = ConfusionMatrixMetric(metric_name="precision", reduction="mean", include_background=False)
 recall_metric = ConfusionMatrixMetric(metric_name="recall", reduction="mean", include_background=False)
 miou_metric = ConfusionMatrixMetric(metric_name="jaccard", reduction="mean", include_background=False)
