@@ -64,10 +64,13 @@ wandb.init(
     settings=wandb.Settings(init_timeout=300, start_method="thread")
 )
 
+from datetime import datetime
 # ==============================
 # TensorBoard Init
 # ==============================
-writer = SummaryWriter(log_dir="tb_logs")
+log_dir = os.path.join("tb_logs", datetime.now().strftime("%Y%m%d-%H%M%S"))
+writer = SummaryWriter(log_dir=log_dir)
+print(f"[INFO] TensorBoard logs at {log_dir}")
 
 # ==============================
 # Data Loaders
