@@ -18,7 +18,7 @@ def get_dataloaders(data_dir="./data/raw", batch_size=2, patch_size=(128, 128, 6
     """
     Create train and validation dataloaders for rectal cancer CT segmentation.
     Args:
-        data_dir: path to dataset
+        data_dir: path to dataset, should contain 'images' and 'masks' subdirs
         batch_size: batch size for training
         patch_size: crop size for training patches
         debug: if True, only load a small subset of data for quick testing
@@ -29,7 +29,7 @@ def get_dataloaders(data_dir="./data/raw", batch_size=2, patch_size=(128, 128, 6
     print("Found images:", len(images))
     print("Found labels:", len(labels))
 
-    if debug:  # ⚡ 小数据集
+    if debug:  # Use a small subset for debugging
         images = images[:8]
         labels = labels[:8]
         print(f"[DEBUG] Using subset: {len(images)} images")
@@ -38,31 +38,33 @@ def get_dataloaders(data_dir="./data/raw", batch_size=2, patch_size=(128, 128, 6
     n_train = int(0.8 * len(images))
     train_files = [{"image": img, "label": lbl} for img, lbl in zip(images[:n_train], labels[:n_train])]
     val_files = [{"image": img, "label": lbl} for img, lbl in zip(images[n_train:], labels[n_train:])]
+    # Example train_files: [{"image": ".../images/case_0001.nii.gz", "label": ".../masks/case_0001.nii.gz"}, ...]
+    # Example val_files: [{"image": ".../images/case_0005.nii.gz", "label": ".../masks/case_0005.nii.gz"}, ...]
 
     # Training transforms
     train_transforms = Compose([
         LoadImaged(keys=["image", "label"]),
         EnsureChannelFirstd(keys=["image", "label"]),
-        Spacingd(keys=["image", "label"], pixdim=(1.0, 1.0, 3.0), mode=("bilinear", "nearest")),
-        ScaleIntensityRanged(keys=["image"], a_min=-200, a_max=250, b_min=0.0, b_max=1.0, clip=True),
+        # Spacingd(keys=["image", "label"], pixdim=(1.0, 1.0, 3.0), mode=("bilinear", "nearest")),
+        ScaleIntensityRanged(keys=["image"], a_min=-100, a_max=94, b_min=0.0, b_max=1.0, clip=True),
         RandCropByPosNegLabeld(
             keys=["image", "label"],
             label_key="label",
-            spatial_size=patch_size,   # ⚡ 外部传入
-            pos=4, neg=1,
-            num_samples=4,
+            spatial_size=patch_size,   # Default (128, 128, 64) but can be overridden
+            pos=5, neg=1,
+            num_samples=8,
         ),
-        RandFlipd(keys=["image", "label"], prob=0.5, spatial_axis=[0]),
-        RandRotate90d(keys=["image", "label"], prob=0.5, max_k=3),
+        RandFlipd(keys=["image", "label"], prob=0.5, spatial_axis=[0, 1]), # Flip along both spatial axes
+        RandRotate90d(keys=["image", "label"], prob=0.5, max_k=3), # Rotate 90, 180, or 270 degrees
         EnsureTyped(keys=["image", "label"]),
     ])
 
-    # Validation transforms (不做 crop，只做 spacing/intensity normalize)
+    # Validation transforms (No cropping or augmentation, just normalization)
     val_transforms = Compose([
         LoadImaged(keys=["image", "label"]),
         EnsureChannelFirstd(keys=["image", "label"]),
-        Spacingd(keys=["image", "label"], pixdim=(1.0, 1.0, 3.0), mode=("bilinear", "nearest")),
-        ScaleIntensityRanged(keys=["image"], a_min=-200, a_max=250, b_min=0.0, b_max=1.0, clip=True),
+        # Spacingd(keys=["image", "label"], pixdim=(1.0, 1.0, 3.0), mode=("bilinear", "nearest")),
+        ScaleIntensityRanged(keys=["image"], a_min=-100, a_max=94, b_min=0.0, b_max=1.0, clip=True),
         EnsureTyped(keys=["image", "label"]),
     ])
 
@@ -73,12 +75,12 @@ def get_dataloaders(data_dir="./data/raw", batch_size=2, patch_size=(128, 128, 6
     # Loaders
     train_loader = DataLoader(
         train_ds, batch_size=batch_size, shuffle=True,
-        num_workers=2 if debug else 4,   # ⚡ 调试时少开 workers
+        num_workers=2 if debug else 4,   # use less workers in debug mode
         pin_memory=True, persistent_workers=not debug,
         collate_fn=list_data_collate
     )
     val_loader = DataLoader(
-        val_ds, batch_size=1, shuffle=False,
+        val_ds, batch_size=1, shuffle=False, # Use batch size 1 for validation
         num_workers=2 if debug else 4,
         pin_memory=True, persistent_workers=not debug,
         collate_fn=list_data_collate
