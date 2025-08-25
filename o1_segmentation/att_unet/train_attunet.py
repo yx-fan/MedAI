@@ -17,6 +17,7 @@ from tqdm import tqdm, trange
 from data_loader import get_dataloaders
 import wandb
 import matplotlib.pyplot as plt
+from torch.utils.tensorboard import SummaryWriter
 
 # ==============================
 # Post transforms
@@ -64,6 +65,11 @@ wandb.init(
 )
 
 # ==============================
+# TensorBoard Init
+# ==============================
+writer = SummaryWriter(log_dir="tb_logs")
+
+# ==============================
 # Data Loaders
 # ==============================
 train_loader, val_loader = get_dataloaders(
@@ -97,7 +103,7 @@ scheduler = SequentialLR(optimizer, schedulers=[warmup, cosine], milestones=[5])
 # Metrics
 # ==============================
 dice_metric = DiceMetric(include_background=False, reduction="none")
-hausdorff_metric = HausdorffDistanceMetric(include_background=False, reduction="none", percentile=None)
+hausdorff_metric = HausdorffDistanceMetric(include_background=False, reduction="none", percentile=95, approximate=True)
 precision_metric = ConfusionMatrixMetric(metric_name="precision", reduction="mean", include_background=False)
 recall_metric = ConfusionMatrixMetric(metric_name="recall", reduction="mean", include_background=False)
 miou_metric = ConfusionMatrixMetric(metric_name="jaccard", reduction="mean", include_background=False)
@@ -151,7 +157,7 @@ with open(log_path, log_mode, newline="") as f:
     writer = csv.writer(f)
     if write_header:
         writer.writerow(["epoch", "train_loss", "val_loss", "fg_dice_mean", "fg_dice_std",
-                         "hausdorff_mean", "hausdorff_max", "precision", "recall",
+                         "hausdorff_mean", "precision", "recall",
                          "specificity", "miou", "lr", "grad_norm"])
 
 # ==============================
@@ -256,14 +262,14 @@ for epoch in trange(start_epoch, num_epochs, desc="Total Progress"):
     fg_dice_mean = float(torch.as_tensor(dice_vals).mean().item())
     fg_dice_std = float(torch.as_tensor(dice_vals).std().item())
     hausdorff_mean = float(torch.as_tensor(hausdorff_vals).mean().item())
-    hausdorff_max = float(torch.as_tensor(hausdorff_vals).max().item())
+    # hausdorff_max = float(torch.as_tensor(hausdorff_vals).max().item())
     precision_val = float(torch.as_tensor(precision_metric.aggregate()).mean().item())
     recall_val = float(torch.as_tensor(recall_metric.aggregate()).mean().item())
     miou_val = float(torch.as_tensor(miou_metric.aggregate()).mean().item())
     specificity_val = float(torch.as_tensor(specificity_metric.aggregate()).mean().item())
 
     print(f"Val Loss: {avg_val_loss:.4f}, Dice={fg_dice_mean:.4f}±{fg_dice_std:.4f}, "
-          f"Hausdorff={hausdorff_mean:.2f} (max {hausdorff_max:.2f}), "
+          f"Hausdorff={hausdorff_mean:.2f}, "
           f"Precision={precision_val:.4f}, Recall={recall_val:.4f}, Specificity={specificity_val:.4f}, mIoU={miou_val:.4f}")
     log_gpu("After Validation")
 
@@ -273,11 +279,27 @@ for epoch in trange(start_epoch, num_epochs, desc="Total Progress"):
     # -------- Save Logs --------
     lr_now = scheduler.get_last_lr()[0]
     with open(log_path, "a", newline="") as f:
-        writer = csv.writer(f)
-        writer.writerow([epoch+1, avg_train_loss, avg_val_loss,
-                         fg_dice_mean, fg_dice_std,
-                         hausdorff_mean, hausdorff_max,
-                         precision_val, recall_val, specificity_val, miou_val, lr_now, grad_norm])
+        writer_csv = csv.writer(f)
+        writer_csv.writerow([
+            epoch+1, avg_train_loss, avg_val_loss,
+            fg_dice_mean, fg_dice_std,
+            hausdorff_mean, precision_val, recall_val, specificity_val,
+            miou_val, lr_now, grad_norm
+    ])
+
+    # TensorBoard log
+    writer.add_scalar("Loss/train", avg_train_loss, epoch+1)
+    writer.add_scalar("Loss/val", avg_val_loss, epoch+1)
+    writer.add_scalar("Dice/val_mean", fg_dice_mean, epoch+1)
+    writer.add_scalar("Dice/val_std", fg_dice_std, epoch+1)
+    writer.add_scalar("Hausdorff/val_mean", hausdorff_mean, epoch+1)
+    # writer.add_scalar("Hausdorff/val_max", hausdorff_max, epoch+1)
+    writer.add_scalar("Precision/val", precision_val, epoch+1)
+    writer.add_scalar("Recall/val", recall_val, epoch+1)
+    writer.add_scalar("Specificity/val", specificity_val, epoch+1)
+    writer.add_scalar("mIoU/val", miou_val, epoch+1)
+    writer.add_scalar("GradNorm", grad_norm, epoch+1)
+    writer.add_scalar("LR", lr_now, epoch+1)
 
     wandb.log({
         "Loss/train": avg_train_loss,
@@ -285,7 +307,7 @@ for epoch in trange(start_epoch, num_epochs, desc="Total Progress"):
         "Dice/val_mean": fg_dice_mean,
         "Dice/val_std": fg_dice_std,
         "Hausdorff/val_mean": hausdorff_mean,
-        "Hausdorff/val_max": hausdorff_max,
+        # "Hausdorff/val_max": hausdorff_max,
         "Precision/val": precision_val,
         "Recall/val": recall_val,
         "Specificity/val": specificity_val,
@@ -322,3 +344,4 @@ for epoch in trange(start_epoch, num_epochs, desc="Total Progress"):
     print(f"[ETA] Epoch time: {epoch_time/60:.2f} min | Elapsed: {elapsed/60:.2f} min | Remaining: {remaining/60:.2f} min")
 
 wandb.finish()
+writer.close()
