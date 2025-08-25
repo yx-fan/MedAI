@@ -154,11 +154,11 @@ log_path = os.path.join(save_dir, "train_log.csv")
 write_header = not (args.resume and os.path.exists(log_path))
 log_mode = "a" if os.path.exists(log_path) else "w"
 with open(log_path, log_mode, newline="") as f:
-    writer = csv.writer(f)
+    writer_csv = csv.writer(f)
     if write_header:
-        writer.writerow(["epoch", "train_loss", "val_loss", "fg_dice_mean", "fg_dice_std",
-                         "precision", "recall",
-                         "specificity", "miou", "lr", "grad_norm"])
+        writer_csv.writerow(["epoch", "train_loss", "val_loss", "fg_dice_mean", "fg_dice_std",
+                             "precision", "recall",
+                             "specificity", "miou", "lr", "grad_norm"])
 
 # ==============================
 # Helper: GPU memory logger
