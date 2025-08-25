@@ -106,7 +106,7 @@ dice_metric = DiceMetric(include_background=False, reduction="none")
 # hausdorff_metric = HausdorffDistanceMetric(include_background=False, reduction="mean", percentile=95, directed=True)
 precision_metric = ConfusionMatrixMetric(metric_name="precision", reduction="mean", include_background=False)
 recall_metric = ConfusionMatrixMetric(metric_name="recall", reduction="mean", include_background=False)
-miou_metric = ConfusionMatrixMetric(metric_name="jaccard", reduction="mean", include_background=False)
+# miou_metric = ConfusionMatrixMetric(metric_name="jaccard", reduction="mean", include_background=False)
 specificity_metric = ConfusionMatrixMetric(metric_name="specificity", reduction="mean", include_background=False)
 
 # ==============================
@@ -227,7 +227,7 @@ for epoch in trange(start_epoch, num_epochs, desc="Total Progress"):
     # hausdorff_metric.reset()
     precision_metric.reset()
     recall_metric.reset()
-    miou_metric.reset()
+    # miou_metric.reset()
     specificity_metric.reset()
 
     with torch.no_grad():
@@ -253,8 +253,15 @@ for epoch in trange(start_epoch, num_epochs, desc="Total Progress"):
             # hausdorff_metric(y_pred=y_pred_list, y=y_list)
             precision_metric(y_pred=y_pred_list, y=y_list)
             recall_metric(y_pred=y_pred_list, y=y_list)
-            miou_metric(y_pred=y_pred_list, y=y_list)
+            # miou_metric(y_pred=y_pred_list, y=y_list)
             specificity_metric(y_pred=y_pred_list, y=y_list)
+            # --- Manual mIoU calculation ---
+            # Flatten predictions and labels to binary (ignoring background channel 0)
+            pred_bin = torch.cat([p[:, 1].flatten().detach() for p in y_pred_list])
+            true_bin = torch.cat([t[:, 1].flatten().detach() for t in y_list])
+            intersection = (pred_bin * true_bin).sum().float()
+            union = (pred_bin + true_bin - pred_bin * true_bin).sum().float()
+            
 
     avg_val_loss = val_loss / max(1, len(val_loader))
     dice_vals = dice_metric.aggregate()
@@ -265,7 +272,7 @@ for epoch in trange(start_epoch, num_epochs, desc="Total Progress"):
     # hausdorff_max = float(torch.as_tensor(hausdorff_vals).max().item())
     precision_val = float(torch.as_tensor(precision_metric.aggregate()).mean().item())
     recall_val = float(torch.as_tensor(recall_metric.aggregate()).mean().item())
-    miou_val = float(torch.as_tensor(miou_metric.aggregate()).mean().item())
+    miou_val = float((intersection + 1e-6) / (union + 1e-6))
     specificity_val = float(torch.as_tensor(specificity_metric.aggregate()).mean().item())
 
     print(f"Val Loss: {avg_val_loss:.4f}, Dice={fg_dice_mean:.4f}±{fg_dice_std:.4f}, "
