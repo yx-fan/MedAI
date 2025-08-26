@@ -85,11 +85,11 @@ train_loader, val_loader = get_dataloaders(
 # Model Definition
 # ==============================
 model = SwinUNETR(
-    img_size=(64, 64, 32) if args.debug else (128, 128, 64),  # input patch size
-    in_channels=1, # channel
-    out_channels=2,      # output classes
-    feature_size=48,     # base feature channels (recommended 24/48/96)
-    use_checkpoint=True  # save memory, optional
+    (64, 64, 32) if args.debug else (128, 128, 64),  # img_size (positional arg)
+    1,   # in_channels
+    2,   # out_channels
+    feature_size=48,
+    use_checkpoint=True
 ).to(device)
 
 # ==============================
