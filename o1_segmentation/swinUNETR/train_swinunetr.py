@@ -85,11 +85,11 @@ train_loader, val_loader = get_dataloaders(
 # Model Definition
 # ==============================
 model = SwinUNETR(
-    (64, 64, 32) if args.debug else (128, 128, 64),  # img_size (positional arg)
-    1,   # in_channels
-    2,   # out_channels
-    feature_size=48,
-    use_checkpoint=True
+    in_channels=1,        # single-channel CT
+    out_channels=2,       # foreground + background
+    feature_size=48,      # base feature channels (24 is more memory-efficient, 96 is stronger)
+    use_checkpoint=True,  # memory optimization
+    spatial_dims=3        # 3D segmentation
 ).to(device)
 
 # ==============================
