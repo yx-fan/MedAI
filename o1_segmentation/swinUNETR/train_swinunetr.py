@@ -57,7 +57,7 @@ wandb.init(
     project="rectal-cancer-swinunetr-seg",
     config={
         "epochs": num_epochs,
-        "batch_size": 1 if args.debug else 2,
+        "batch_size": 1 if args.debug else 1,
         "learning_rate": learning_rate,
         "architecture": "SwinUNETR"
     },
@@ -77,7 +77,7 @@ print(f"[INFO] TensorBoard logs at {log_dir}")
 # ==============================
 train_loader, val_loader = get_dataloaders(
     data_dir="./data/raw",
-    batch_size=1 if args.debug else 2,
+    batch_size=1 if args.debug else 1,
     debug=args.debug
 )
 
@@ -243,7 +243,7 @@ for epoch in trange(start_epoch, num_epochs, desc="Total Progress"):
                 outputs = sliding_window_inference(
                     images,
                     roi_size=(64, 64, 32) if args.debug else (128, 128, 64),
-                    sw_batch_size=1 if args.debug else 2,
+                    sw_batch_size=1 if args.debug else 1,
                     predictor=model,
                     overlap=0.25
                 )
