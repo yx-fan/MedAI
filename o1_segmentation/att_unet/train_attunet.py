@@ -233,6 +233,7 @@ for epoch in trange(start_epoch, num_epochs, desc="Total Progress"):
     # miou_metric.reset()
     specificity_metric.reset()
 
+    ious = []
     with torch.no_grad():
         for step, batch in enumerate(tqdm(val_loader, desc="Validation", leave=False)):
             images = batch["image"].to(device)
@@ -260,10 +261,15 @@ for epoch in trange(start_epoch, num_epochs, desc="Total Progress"):
             specificity_metric(y_pred=y_pred_list, y=y_list)
             # --- Manual mIoU calculation ---
             # Flatten predictions and labels to binary (ignoring background channel 0)
-            pred_bin = torch.cat([p[:, 1].flatten().detach() for p in y_pred_list])
-            true_bin = torch.cat([t[:, 1].flatten().detach() for t in y_list])
-            intersection = (pred_bin * true_bin).sum().float()
-            union = (pred_bin + true_bin - pred_bin * true_bin).sum().float()
+            for p, t in zip(y_pred_list, y_list):
+                pred_bin = (p[:, 1] > 0.5).flatten().int()
+                true_bin = t[:, 1].flatten().int()
+                
+                intersection = (pred_bin & true_bin).sum().float()
+                union = (pred_bin | true_bin).sum().float()
+                
+                if union > 0:
+                    ious.append((intersection / union).item())
             
 
     avg_val_loss = val_loss / max(1, len(val_loader))
@@ -275,7 +281,7 @@ for epoch in trange(start_epoch, num_epochs, desc="Total Progress"):
     # hausdorff_max = float(torch.as_tensor(hausdorff_vals).max().item())
     precision_val = float(torch.as_tensor(precision_metric.aggregate()).mean().item())
     recall_val = float(torch.as_tensor(recall_metric.aggregate()).mean().item())
-    miou_val = float((intersection + 1e-6) / (union + 1e-6))
+    miou_val = float(torch.tensor(ious).mean().item()) if ious else 0.0
     specificity_val = float(torch.as_tensor(specificity_metric.aggregate()).mean().item())
 
     print(f"Val Loss: {avg_val_loss:.4f}, Dice={fg_dice_mean:.4f}±{fg_dice_std:.4f}, "
