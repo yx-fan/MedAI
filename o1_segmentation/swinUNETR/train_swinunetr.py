@@ -57,7 +57,7 @@ wandb.init(
     project="rectal-cancer-swinunetr-seg",
     config={
         "epochs": num_epochs,
-        "batch_size": 2 if args.debug else 4,
+        "batch_size": 1 if args.debug else 2,
         "learning_rate": learning_rate,
         "architecture": "SwinUNETR"
     },
@@ -77,7 +77,7 @@ print(f"[INFO] TensorBoard logs at {log_dir}")
 # ==============================
 train_loader, val_loader = get_dataloaders(
     data_dir="./data/raw",
-    batch_size=2 if args.debug else 4,
+    batch_size=1 if args.debug else 2,
     debug=args.debug
 )
 
