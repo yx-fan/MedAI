@@ -6,14 +6,18 @@ import argparse
 from torch.optim import AdamW
 from torch.optim.lr_scheduler import CosineAnnealingLR, LinearLR, SequentialLR
 from monai.networks.nets import UNet
-from monai.losses import DiceCELoss, TverskyLoss
-from monai.metrics import DiceMetric
+from monai.losses import DiceFocalLoss
+from monai.metrics import DiceMetric, HausdorffDistanceMetric
+from monai.metrics import ConfusionMatrixMetric
 from monai.inferers import sliding_window_inference
 from monai.transforms import AsDiscrete
 from monai.data import decollate_batch
 import torch.backends.cudnn as cudnn
 from tqdm import tqdm, trange
 from data_loader import get_dataloaders
+import wandb
+import matplotlib.pyplot as plt
+from torch.utils.tensorboard import SummaryWriter
 
 # ==============================
 # Post transforms
@@ -37,7 +41,7 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print(f"[INFO] Training on {device}")
 cudnn.benchmark = True
 
-base_epochs = 200 if not args.debug else 3
+base_epochs = 100 if not args.debug else 3
 num_epochs = base_epochs
 start_epoch = 0
 
@@ -47,90 +51,75 @@ os.makedirs(save_dir, exist_ok=True)
 best_dice = -1.0
 
 # ==============================
+# WandB Init
+# ==============================
+wandb.init(
+    project="rectal-cancer-unet-seg",
+    config={
+        "epochs": num_epochs,
+        "batch_size": 1 if args.debug else 2,
+        "learning_rate": learning_rate,
+        "architecture": "UNet"
+    },
+    settings=wandb.Settings(init_timeout=300, start_method="thread")
+)
+
+from datetime import datetime
+# ==============================
+# TensorBoard Init
+# ==============================
+log_dir = os.path.join("tb_logs", datetime.now().strftime("%Y%m%d-%H%M%S"))
+writer = SummaryWriter(log_dir=log_dir)
+print(f"[INFO] TensorBoard logs at {log_dir}")
+
+# ==============================
 # Data Loaders
 # ==============================
 train_loader, val_loader = get_dataloaders(
     data_dir="./data/raw",
-    batch_size=2 if args.debug else 4,
+    batch_size=1 if args.debug else 2,
     debug=args.debug
 )
 
 # ==============================
-# Model Definition (UNet)
+# Model Definition
 # ==============================
-channels = (8, 16, 32, 64) if args.debug else (16, 32, 64, 128, 256)
-strides  = (2, 2, 2)        if args.debug else (2, 2, 2, 2)
-
 model = UNet(
-    spatial_dims=3,
-    in_channels=1,
-    out_channels=2,
-    channels=channels,
-    strides=strides,
-    num_res_units=3,
-    norm="instance",
-    act="PRELU",
-    dropout=0.0
+    spatial_dims=3,          # 3D segmentation
+    in_channels=1,           # single-channel CT
+    out_channels=2,          # foreground + background
+    channels=(16, 32, 64, 128, 256),  # channels at each layer
+    strides=(2, 2, 2, 2),    # downsampling at each layer
+    num_res_units=2,         # number of residual units
 ).to(device)
 
 # ==============================
-# Losses（课程式：前期 DiceCE，后期 Tversky + DiceCE）
+# Loss, Optimizer, Scheduler
 # ==============================
-# 小目标友好：Tversky（偏向召回，beta>alpha）
-loss_tv = TverskyLoss(
-    include_background=False,
-    to_onehot_y=True,
-    softmax=True,
-    alpha=0.3,   # FP 权重
-    beta=0.7     # FN 权重（更重）
-)
-# 稳定语义与边界：Dice + 加权 CE
-ce_weight = torch.tensor([0.2, 0.8], device=device)  # [bg, fg]
-loss_dicece = DiceCELoss(
-    include_background=True,
-    to_onehot_y=True,
-    softmax=True,
-    lambda_dice=1.0,   # dice 部分的权重
-    lambda_ce=1.0,     # ce 部分的权重
-)
-CURRICULUM_EPOCHS = 15  # 前 15 个“当前会话 epoch”用 DiceCE 热身
-
-# ==============================
-# Optimizer & Scheduler
-# ==============================
+loss_fn = DiceFocalLoss(to_onehot_y=True, softmax=True, gamma=2.0)
 optimizer = AdamW(model.parameters(), lr=learning_rate, weight_decay=1e-5)
-warmup = LinearLR(optimizer, start_factor=1e-2, total_iters=15)
-cosine = CosineAnnealingLR(optimizer, T_max=base_epochs, eta_min=1e-5)
-scheduler = SequentialLR(optimizer, schedulers=[warmup, cosine], milestones=[5])
-scheduler.last_epoch = -1  # 新训练时从 -1 开始，下一次 step 即 0
 
-# Dice metric（忽略背景）
-dice_metric = DiceMetric(include_background=False, reduction="mean", get_not_nans=True)
+warmup = LinearLR(optimizer, start_factor=1e-2, total_iters=5)
+cosine = CosineAnnealingLR(optimizer, T_max=base_epochs, eta_min=1e-6)
+scheduler = SequentialLR(optimizer, schedulers=[warmup, cosine], milestones=[5])
 
 # ==============================
-# AMP (混合精度)
+# Metrics
+# ==============================
+dice_metric = DiceMetric(include_background=False, reduction="none")
+# hausdorff_metric = HausdorffDistanceMetric(include_background=False, reduction="mean", percentile=95, directed=True)
+precision_metric = ConfusionMatrixMetric(metric_name="precision", reduction="mean", include_background=False)
+recall_metric = ConfusionMatrixMetric(metric_name="recall", reduction="mean", include_background=False)
+# miou_metric = ConfusionMatrixMetric(metric_name="jaccard", reduction="mean", include_background=False)
+specificity_metric = ConfusionMatrixMetric(metric_name="specificity", reduction="mean", include_background=False)
+
+# ==============================
+# AMP Scaler
 # ==============================
 scaler = torch.amp.GradScaler("cuda", enabled=(device.type == "cuda"))
 
 # ==============================
-# 输出层前景先验偏置（仅非 resume）
-# ==============================
-def init_pos_logit_bias(model, pos_prior=1e-3):
-    """将最终前景通道的 bias 设为 ln(p/(1-p))，加速极小前景收敛。"""
-    with torch.no_grad():
-        bias_val = float(torch.log(torch.tensor(pos_prior/(1-pos_prior))))
-        last_conv = None
-        for m in model.modules():
-            if isinstance(m, torch.nn.Conv3d) and m.out_channels == 2:
-                last_conv = m
-        if last_conv is not None:
-            if last_conv.bias is None:
-                last_conv.bias = torch.nn.Parameter(torch.zeros(last_conv.out_channels, device=next(model.parameters()).device))
-            # 背景通道保持 0，前景通道给负偏置
-            last_conv.bias[1].fill_(bias_val)
-
-# ==============================
-# Resume（并对齐 scheduler）
+# Resume (optional)
 # ==============================
 if args.resume:
     print(f"[INFO] Resuming from {args.resume}")
@@ -157,15 +146,10 @@ if args.resume:
     num_epochs = total_epochs
     print(f"[INFO] Will train epochs [{start_epoch} -> {num_epochs})")
 
-    # 重建 scheduler，用总轮数对齐，并设置 last_epoch=start_epoch-1
     warmup = LinearLR(optimizer, start_factor=1e-2, total_iters=5)
     cosine = CosineAnnealingLR(optimizer, T_max=num_epochs, eta_min=1e-6)
     scheduler = SequentialLR(optimizer, schedulers=[warmup, cosine], milestones=[5])
-    scheduler.last_epoch = start_epoch - 1
-else:
-    init_pos_logit_bias(model, pos_prior=1e-3)
-    num_epochs = base_epochs
-    start_epoch = 0
+    scheduler.last_epoch = start_epoch
 
 # ==============================
 # CSV Logger
@@ -174,9 +158,11 @@ log_path = os.path.join(save_dir, "train_log.csv")
 write_header = not (args.resume and os.path.exists(log_path))
 log_mode = "a" if os.path.exists(log_path) else "w"
 with open(log_path, log_mode, newline="") as f:
-    writer = csv.writer(f)
+    writer_csv = csv.writer(f)
     if write_header:
-        writer.writerow(["epoch", "train_loss", "val_loss", "fg_dice", "lr"])
+        writer_csv.writerow(["epoch", "train_loss", "val_loss", "fg_dice_mean", "fg_dice_std",
+                             "precision", "recall",
+                             "specificity", "miou", "lr", "grad_norm"])
 
 # ==============================
 # Helper: GPU memory logger
@@ -185,6 +171,18 @@ def log_gpu(stage: str):
     if device.type == "cuda":
         mem = torch.cuda.max_memory_allocated(device) / 1024**2
         print(f"[GPU] {stage} | Allocated: {mem:.2f} MB")
+
+# ==============================
+# Helper: WandB prediction visualization
+# ==============================
+def log_prediction(image, label, pred, epoch):
+    mid = image.shape[-1] // 2
+    plt.figure(figsize=(12, 4))
+    plt.subplot(1, 3, 1); plt.imshow(image[0, 0, :, :, mid], cmap="gray"); plt.title("Image")
+    plt.subplot(1, 3, 2); plt.imshow(label[0, 0, :, :, mid]); plt.title("GT")
+    plt.subplot(1, 3, 3); plt.imshow(pred[0, 1, :, :, mid]); plt.title("Pred")
+    wandb.log({"Predictions": wandb.Image(plt)}, step=epoch)
+    plt.close()
 
 # ==============================
 # Training Loop
@@ -198,42 +196,45 @@ for epoch in trange(start_epoch, num_epochs, desc="Total Progress"):
     # -------- Training --------
     model.train()
     train_loss = 0.0
+    grad_norm = 0.0
     for step, batch in enumerate(tqdm(train_loader, desc="Training", leave=False)):
         images = batch["image"].to(device)
         masks  = batch["label"].to(device).long()
 
         optimizer.zero_grad(set_to_none=True)
+
         with torch.amp.autocast("cuda", enabled=(device.type == "cuda")):
             outputs = model(images)
-            # 课程式损失：当前会话相对 epoch
-            session_epoch = epoch - start_epoch
-            if session_epoch < CURRICULUM_EPOCHS:
-                loss = loss_dicece(outputs, masks)
-            else:
-                loss = 0.7 * loss_tv(outputs, masks) + 0.3 * loss_dicece(outputs, masks)
-
-        # 梯度裁剪（AMP：先 unscale 再 clip）
+            loss = loss_fn(outputs, masks)
         scaler.scale(loss).backward()
-        scaler.unscale_(optimizer)
-        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+
+        total_norm = 0.0
+        for p in model.parameters():
+            if p.grad is not None:
+                param_norm = p.grad.data.norm(2).item()
+                total_norm += param_norm ** 2
+        grad_norm = (total_norm ** 0.5)
+
         scaler.step(optimizer)
         scaler.update()
 
         train_loss += loss.item()
 
-        if step < 3:
-            print(f"[Train][Batch {step}] Loss: {loss.item():.4f}")
-            log_gpu(f"After Batch {step}")
-
     avg_train_loss = train_loss / max(1, len(train_loader))
-    print(f"Train Loss: {avg_train_loss:.4f}")
+    print(f"Train Loss: {avg_train_loss:.4f}, GradNorm={grad_norm:.2f}")
     log_gpu("After Training")
 
     # -------- Validation --------
     model.eval()
     val_loss = 0.0
     dice_metric.reset()
+    # hausdorff_metric.reset()
+    precision_metric.reset()
+    recall_metric.reset()
+    # miou_metric.reset()
+    specificity_metric.reset()
 
+    ious = []
     with torch.no_grad():
         for step, batch in enumerate(tqdm(val_loader, desc="Validation", leave=False)):
             images = batch["image"].to(device)
@@ -242,50 +243,94 @@ for epoch in trange(start_epoch, num_epochs, desc="Total Progress"):
             with torch.amp.autocast("cuda", enabled=(device.type == "cuda")):
                 outputs = sliding_window_inference(
                     images,
-                    roi_size=(160, 160, 96) if not args.debug else (48, 48, 24),
+                    roi_size=(64, 64, 32) if args.debug else (128, 128, 64),
                     sw_batch_size=1 if args.debug else 2,
                     predictor=model,
-                    overlap=0.5
+                    overlap=0.25
                 )
-                # 验证端沿用当前损失（仅监控）
-                session_epoch = epoch - start_epoch
-                if session_epoch < CURRICULUM_EPOCHS:
-                    loss = loss_dicece(outputs, masks)
-                else:
-                    loss = 0.7 * loss_tv(outputs, masks) + 0.3 * loss_dicece(outputs, masks)
+                loss = loss_fn(outputs, masks)
 
             val_loss += loss.item()
 
             y_pred_list = [post_pred(o) for o in decollate_batch(outputs)]
             y_list      = [post_label(y) for y in decollate_batch(masks)]
             dice_metric(y_pred=y_pred_list, y=y_list)
+            # hausdorff_metric(y_pred=y_pred_list, y=y_list)
+            precision_metric(y_pred=y_pred_list, y=y_list)
+            recall_metric(y_pred=y_pred_list, y=y_list)
+            # miou_metric(y_pred=y_pred_list, y=y_list)
+            specificity_metric(y_pred=y_pred_list, y=y_list)
+            # --- Manual mIoU calculation ---
+            # Flatten predictions and labels to binary (ignoring background channel 0)
+            for p, t in zip(y_pred_list, y_list):
+                pred_bin = (p[:, 1] > 0.5).flatten().int()
+                true_bin = t[:, 1].flatten().int()
+                
+                intersection = (pred_bin & true_bin).sum().float()
+                union = (pred_bin | true_bin).sum().float()
+                
+                if union > 0:
+                    ious.append((intersection / union).item())
+            
 
     avg_val_loss = val_loss / max(1, len(val_loader))
-    res = dice_metric.aggregate()
+    dice_vals = dice_metric.aggregate()
+    # hausdorff_vals = hausdorff_metric.aggregate()
+    fg_dice_mean = float(torch.as_tensor(dice_vals).mean().item())
+    fg_dice_std = float(torch.as_tensor(dice_vals).std().item())
+    # hausdorff_mean = float(torch.as_tensor(hausdorff_vals).mean().item())
+    # hausdorff_max = float(torch.as_tensor(hausdorff_vals).max().item())
+    precision_val = float(torch.as_tensor(precision_metric.aggregate()).mean().item())
+    recall_val = float(torch.as_tensor(recall_metric.aggregate()).mean().item())
+    miou_val = float(torch.tensor(ious).mean().item()) if ious else 0.0
+    specificity_val = float(torch.as_tensor(specificity_metric.aggregate()).mean().item())
 
-    if isinstance(res, (tuple, list)) and len(res) == 2:
-        fg_dice_tensor, _ = res
-    else:
-        fg_dice_tensor = res
-
-    fg_dice = float(torch.as_tensor(fg_dice_tensor).mean().item())
-
-    try:
-        valid = int(dice_metric.get_buffer("not_nans").sum().item())
-    except Exception:
-        valid = None
-
-    if valid is not None:
-        print(f"Val Loss: {avg_val_loss:.4f}, FG Dice={fg_dice:.4f}, (valid cases: {valid})")
-    else:
-        print(f"Val Loss: {avg_val_loss:.4f}, FG Dice={fg_dice:.4f}")
+    print(f"Val Loss: {avg_val_loss:.4f}, Dice={fg_dice_mean:.4f}±{fg_dice_std:.4f}, "
+          f"Precision={precision_val:.4f}, Recall={recall_val:.4f}, Specificity={specificity_val:.4f}, mIoU={miou_val:.4f}")
     log_gpu("After Validation")
 
+    if (epoch + 1) % 10 == 0:
+        log_prediction(images.cpu().numpy(), masks.cpu().numpy(), outputs.cpu().numpy(), epoch+1)
+
     # -------- Save Logs --------
-    lr_now = scheduler.get_last_lr()[0] if hasattr(scheduler, "get_last_lr") else optimizer.param_groups[0]["lr"]
+    lr_now = scheduler.get_last_lr()[0]
     with open(log_path, "a", newline="") as f:
-        writer = csv.writer(f)
-        writer.writerow([epoch+1, avg_train_loss, avg_val_loss, fg_dice, lr_now])
+        writer_csv = csv.writer(f)
+        writer_csv.writerow([
+            epoch+1, avg_train_loss, avg_val_loss,
+            fg_dice_mean, fg_dice_std,
+            precision_val, recall_val, specificity_val,
+            miou_val, lr_now, grad_norm
+    ])
+
+    # TensorBoard log
+    writer.add_scalar("Loss/train", avg_train_loss, epoch+1)
+    writer.add_scalar("Loss/val", avg_val_loss, epoch+1)
+    writer.add_scalar("Dice/val_mean", fg_dice_mean, epoch+1)
+    writer.add_scalar("Dice/val_std", fg_dice_std, epoch+1)
+    # writer.add_scalar("Hausdorff/val_mean", hausdorff_mean, epoch+1)
+    # writer.add_scalar("Hausdorff/val_max", hausdorff_max, epoch+1)
+    writer.add_scalar("Precision/val", precision_val, epoch+1)
+    writer.add_scalar("Recall/val", recall_val, epoch+1)
+    writer.add_scalar("Specificity/val", specificity_val, epoch+1)
+    writer.add_scalar("mIoU/val", miou_val, epoch+1)
+    writer.add_scalar("GradNorm", grad_norm, epoch+1)
+    writer.add_scalar("LR", lr_now, epoch+1)
+
+    wandb.log({
+        "Loss/train": avg_train_loss,
+        "Loss/val": avg_val_loss,
+        "Dice/val_mean": fg_dice_mean,
+        "Dice/val_std": fg_dice_std,
+        # "Hausdorff/val_mean": hausdorff_mean,
+        # "Hausdorff/val_max": hausdorff_max,
+        "Precision/val": precision_val,
+        "Recall/val": recall_val,
+        "Specificity/val": specificity_val,
+        "mIoU/val": miou_val,
+        "GradNorm": grad_norm,
+        "LR": lr_now
+    }, step=epoch+1)
 
     # -------- Save Models --------
     latest_path = os.path.join(save_dir, "latest_model.pth")
@@ -293,11 +338,11 @@ for epoch in trange(start_epoch, num_epochs, desc="Total Progress"):
         "epoch": epoch + 1,
         "model": model.state_dict(),
         "optimizer": optimizer.state_dict(),
-        "fg_dice": fg_dice,
+        "fg_dice": fg_dice_mean,
     }, latest_path)
 
-    if fg_dice > best_dice:
-        best_dice = fg_dice
+    if fg_dice_mean > best_dice:
+        best_dice = fg_dice_mean
         best_path = os.path.join(save_dir, "best_model.pth")
         torch.save(model.state_dict(), best_path)
         print(f"[INFO] Best model updated: {best_path} (FG Dice={best_dice:.4f})")
@@ -307,11 +352,12 @@ for epoch in trange(start_epoch, num_epochs, desc="Total Progress"):
         torch.save(model.state_dict(), final_path)
         print(f"[INFO] Final model saved: {final_path}")
 
-    # -------- Scheduler Step --------
     scheduler.step()
 
-    # -------- ETA --------
     epoch_time = time.time() - epoch_start
     elapsed = time.time() - start_time
     remaining = (num_epochs - (epoch + 1)) * epoch_time
     print(f"[ETA] Epoch time: {epoch_time/60:.2f} min | Elapsed: {elapsed/60:.2f} min | Remaining: {remaining/60:.2f} min")
+
+wandb.finish()
+writer.close()
