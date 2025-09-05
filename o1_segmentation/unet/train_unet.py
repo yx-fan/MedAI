@@ -18,6 +18,7 @@ from data_loader import get_dataloaders
 import wandb
 import matplotlib.pyplot as plt
 from torch.utils.tensorboard import SummaryWriter
+from monai.losses import DiceCELoss
 
 # ==============================
 # Post transforms
@@ -96,7 +97,8 @@ model = UNet(
 # ==============================
 # Loss, Optimizer, Scheduler
 # ==============================
-loss_fn = DiceFocalLoss(to_onehot_y=True, softmax=True, gamma=2.0)
+# loss_fn = DiceFocalLoss(to_onehot_y=True, softmax=True, gamma=2.0)
+loss_fn = DiceCELoss(to_onehot_y=True, softmax=True)
 optimizer = AdamW(model.parameters(), lr=learning_rate, weight_decay=1e-5)
 
 warmup = LinearLR(optimizer, start_factor=1e-2, total_iters=5)
