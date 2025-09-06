@@ -71,7 +71,7 @@ train_loader, val_loader = get_dataloaders(
 # ==============================
 # Model
 # ==============================
-model = deeplabv3_resnet50(pretrained=False, num_classes=2)
+model = deeplabv3_resnet50(weights=None, num_classes=2)
 # 修改输入通道
 old_conv = model.backbone.conv1
 model.backbone.conv1 = torch.nn.Conv2d(
@@ -98,14 +98,14 @@ scheduler = SequentialLR(optimizer, schedulers=[warmup, cosine], milestones=[5])
 # Metrics
 # ==============================
 dice_metric = DiceMetric(include_background=False, reduction="none")
-precision_metric = ConfusionMatrixMetric("precision", reduction="mean", include_background=False)
-recall_metric = ConfusionMatrixMetric("recall", reduction="mean", include_background=False)
-specificity_metric = ConfusionMatrixMetric("specificity", reduction="mean", include_background=False)
+precision_metric   = ConfusionMatrixMetric(metric_name="precision", reduction="mean", include_background=False)
+recall_metric      = ConfusionMatrixMetric(metric_name="recall", reduction="mean", include_background=False)
+specificity_metric = ConfusionMatrixMetric(metric_name="specificity", reduction="mean", include_background=False)
 
 # ==============================
 # AMP Scaler
 # ==============================
-scaler = torch.amp.GradScaler("cuda", enabled=(device.type=="cuda"))
+scaler = torch.cuda.amp.GradScaler(enabled=(device.type=="cuda"))
 
 # ==============================
 # Training Loop
@@ -119,7 +119,7 @@ for epoch in trange(start_epoch, num_epochs, desc="Total Progress"):
         masks  = batch["label"].to(device).long() # [B, H, W]
 
         optimizer.zero_grad(set_to_none=True)
-        with torch.amp.autocast("cuda", enabled=(device.type=="cuda")):
+        with torch.cuda.amp.autocast(enabled=(device.type=="cuda")):
             outputs = model(images)["out"]   # DeepLabV3+ 返回dict
             loss = loss_fn(outputs, masks)
 
@@ -142,7 +142,7 @@ for epoch in trange(start_epoch, num_epochs, desc="Total Progress"):
             images = batch["image"].to(device)
             masks  = batch["label"].to(device).long()
 
-            with torch.amp.autocast("cuda", enabled=(device.type=="cuda")):
+            with torch.cuda.amp.autocast(enabled=(device.type=="cuda")):
                 outputs = model(images)["out"]
                 loss = loss_fn(outputs, masks)
             val_loss += loss.item()
@@ -155,7 +155,7 @@ for epoch in trange(start_epoch, num_epochs, desc="Total Progress"):
             specificity_metric(y_pred=y_pred_list, y=y_list)
 
             for p, t in zip(y_pred_list, y_list):
-                pred_bin = (p[:,1]>0.5).flatten().int()
+                pred_bin = p[:,1].flatten().int()
                 true_bin = t[:,1].flatten().int()
                 inter = (pred_bin & true_bin).sum().float()
                 union = (pred_bin | true_bin).sum().float()
