@@ -3,12 +3,13 @@ import argparse
 import torch
 import numpy as np
 import matplotlib.pyplot as plt
+import nibabel as nib
 
 from monai.networks.nets import UNet
 from monai.inferers import sliding_window_inference
 from monai.transforms import (
     Compose, LoadImaged, EnsureChannelFirstd, ScaleIntensityRanged,
-    EnsureTyped, AsDiscreted, SaveImaged
+    EnsureTyped, AsDiscreted
 )
 from monai.data import Dataset, DataLoader, list_data_collate
 
@@ -43,28 +44,28 @@ def get_infer_loader(image_path, label_path=None):
         LoadImaged(keys=keys),
         EnsureChannelFirstd(keys=keys),
         ScaleIntensityRanged(keys=["image"], a_min=-100, a_max=94, b_min=0.0, b_max=1.0, clip=True),
-        EnsureTyped(keys=keys, track_meta=True),  # ✅ 保留 meta 信息
+        EnsureTyped(keys=keys),
     ])
     ds = Dataset([data], transform=transforms)
     loader = DataLoader(ds, batch_size=1, shuffle=False, num_workers=0, collate_fn=list_data_collate)
     return loader
 
-def save_nifti(pred_dict, out_dir):
-    os.makedirs(out_dir, exist_ok=True)
-    saver = SaveImaged(
-        keys=["pred"],
-        meta_keys=["image_meta_dict"],
-        output_dir=out_dir,
-        output_postfix="pred",
-        resample=False,
-        separate_folder=False
-    )
-    saver(pred_dict)
-    return pred_dict["pred_meta_dict"]["filename_or_obj"]
+def save_nifti_simple(pred_tensor, out_path):
+    """
+    pred_tensor: torch.Tensor [1,2,D,H,W] (one-hot or logits argmax→one-hot)
+    """
+    if pred_tensor.shape[1] == 2:  # one-hot 或 logits
+        pred_np = pred_tensor.argmax(dim=1).squeeze(0).cpu().numpy().astype(np.uint8)  # [D,H,W]
+    else:
+        pred_np = pred_tensor.squeeze().cpu().numpy().astype(np.uint8)
+
+    affine = np.eye(4)  # 简单用单位矩阵
+    nib.save(nib.Nifti1Image(pred_np, affine), out_path)
+    print(f"[INFO] Saved prediction NIfTI to: {out_path}")
 
 def visualize_mid_slices(image_np, pred_np, gt_np, out_png):
-    img = image_np[0]       # [D, H, W]
-    pred_fg = pred_np[1]    # [D, H, W]
+    img = image_np[0]       # [D,H,W]
+    pred_fg = pred_np[1]    # [D,H,W]
 
     mid = img.shape[0] // 2
     img_slice = img[mid]
@@ -122,7 +123,6 @@ def main():
     with torch.no_grad():
         for batch in loader:
             images = batch["image"].to(device)
-            meta = batch.get("image_meta_dict", {})  # ✅ 没有 meta 时返回空字典
 
             logits = sliding_window_inference(
                 images,
@@ -132,19 +132,15 @@ def main():
                 overlap=args.overlap
             )
 
-            pred_dict = {
-                "image": batch["image"],
-                "image_meta_dict": meta,
-                "pred": logits.cpu(),
-            }
-
+            pred_dict = {"pred": logits.cpu()}
             pred_dict = post_proc(pred_dict)
 
             os.makedirs(args.out_dir, exist_ok=True)
-            saved_path = save_nifti(pred_dict, args.out_dir)
-            print(f"[INFO] Saved prediction NIfTI to: {saved_path}")
+            base = os.path.splitext(os.path.basename(args.image))[0].replace(".nii", "")
+            out_nii = os.path.join(args.out_dir, f"{base}_pred.nii.gz")
+            save_nifti_simple(pred_dict["pred"], out_nii)
 
-            img_np  = pred_dict["image"].numpy()[0]
+            img_np  = batch["image"].numpy()[0]
             pred_np = pred_dict["pred"].numpy()[0]
             gt_np   = None
             if args.label and "label" in batch:
@@ -152,7 +148,6 @@ def main():
                 gt_onehot = AsDiscrete(to_onehot=2)(batch["label"])
                 gt_np = gt_onehot.numpy()[0]
 
-            base = os.path.splitext(os.path.basename(args.image))[0].replace(".nii", "")
             out_png = os.path.join(args.out_dir, f"{base}_viz.png")
             visualize_mid_slices(img_np, pred_np, gt_np, out_png)
             print(f"[INFO] Saved visualization to: {out_png}")
