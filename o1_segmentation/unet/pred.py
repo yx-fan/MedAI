@@ -56,18 +56,26 @@ def get_infer_loader(image_path, label_path=None):
 
 def save_nifti_simple(pred_tensor, out_path):
     """
-    pred_tensor: torch.Tensor [1,D,H,W] after argmax
+    Save predicted mask as [D,H,W] nii.gz
+    pred_tensor: torch.Tensor [1,1,D,H,W] or [1,D,H,W]
     """
-    pred_np = pred_tensor.squeeze(0).cpu().numpy().astype(np.uint8)  # [D,H,W]
-    affine = np.eye(4)  # 简单用单位矩阵
+    if pred_tensor.ndim == 5:  # [1,1,D,H,W]
+        pred_tensor = pred_tensor.squeeze(0).squeeze(0)  # [D,H,W]
+    elif pred_tensor.ndim == 4:  # [1,D,H,W]
+        pred_tensor = pred_tensor.squeeze(0)  # [D,H,W]
+    else:
+        raise ValueError(f"Unexpected shape: {pred_tensor.shape}")
+
+    pred_np = pred_tensor.cpu().numpy().astype(np.uint8)
+    affine = np.eye(4)
     nib.save(nib.Nifti1Image(pred_np, affine), out_path)
-    print(f"[INFO] Saved prediction NIfTI to: {out_path}")
+    print(f"[INFO] Saved prediction NIfTI to: {out_path}, shape={pred_np.shape}")
 
 
 def visualize_mid_slices(image_np, pred_np, gt_np, out_png):
     """
     image_np: [1,D,H,W]
-    pred_np:  [2,D,H,W] one-hot for visualization
+    pred_np:  [2,D,H,W] (for visualization, one-hot)
     gt_np:    [2,D,H,W] or None
     """
     img = image_np[0]       # [D,H,W]
@@ -128,6 +136,7 @@ def main():
         for batch in loader:
             images = batch["image"].to(device)
 
+            # logits shape: [1,2,D,H,W]
             logits = sliding_window_inference(
                 images,
                 roi_size=roi_size,
@@ -136,7 +145,7 @@ def main():
                 overlap=args.overlap
             )
 
-            # argmax -> 单通道预测 [1,D,H,W]
+            # argmax -> [1,1,D,H,W]
             pred = torch.argmax(logits, dim=1, keepdim=True).cpu()
 
             os.makedirs(args.out_dir, exist_ok=True)
@@ -146,8 +155,9 @@ def main():
 
             # --- 可视化 ---
             img_np = batch["image"].numpy()[0]  # [1,D,H,W]
-            # 构造 one-hot 方便叠加
-            pred_np = np.stack([1 - pred.numpy()[0, 0], pred.numpy()[0, 0]], axis=0).astype(np.uint8)
+            # 构造 one-hot 方便显示
+            pred_bin = pred.numpy()[0, 0]       # [D,H,W]
+            pred_np = np.stack([1 - pred_bin, pred_bin], axis=0).astype(np.uint8)
             gt_np = None
             if args.label and "label" in batch:
                 lbl = batch["label"].numpy()[0]  # [1,D,H,W]
