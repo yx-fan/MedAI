@@ -128,59 +128,52 @@ for epoch in trange(start_epoch, num_epochs, desc="Total Progress"):
     ious = []
 
     with torch.no_grad():
+        empty_gt_skipped = 0
         for batch in tqdm(val_loader, desc="Validation", leave=False):
-            images = batch["image"].to(device)                     # [B,1,H,W]
-            masks  = batch["label"].unsqueeze(1).to(device).long() # [B,1,H,W]
+            images = batch["image"].to(device)                 # [B,1,H,W]
+            masks  = batch["label"].unsqueeze(1).to(device)    # [B,1,H,W] (索引在通道维)
 
             with torch.amp.autocast("cuda", enabled=(device.type == "cuda")):
-                outputs = model(images)["out"]   # [B,2,H,W]
-                loss = loss_fn(outputs, masks)
+                logits = model(images)["out"]                  # [B,2,H,W]
+                loss = loss_fn(logits, masks)                  # DiceCE 仍然用 one-hot 计算
             val_loss += loss.item()
 
-            # —— 最小修改：显式把预测与标签都转为 one-hot 的 [B,2,H,W] —— #
-            # 预测 argmax -> one-hot
-            pred = torch.argmax(outputs, dim=1)  # [B,H,W]
-            y_pred_oh = torch.nn.functional.one_hot(pred, num_classes=2).permute(0, 3, 1, 2).float()  # [B,2,H,W]
+            # ===== 统一的“索引图”指标计算 =====
+            pred_idx = logits.argmax(dim=1)                    # [B,H,W] {0,1}
+            true_idx = masks.squeeze(1)                        # [B,H,W] {0,1}
 
-            # 标签 squeeze -> one-hot
-            lbl  = masks.squeeze(1)  # [B,H,W]
-            y_oh = torch.nn.functional.one_hot(lbl,  num_classes=2).permute(0, 3, 1, 2).float()       # [B,2,H,W]
+            for p, t in zip(pred_idx, true_idx):
+                # 跳过全空 GT（否则 Dice/IoU 会假性偏高/偏低）
+                if t.sum() == 0:
+                    empty_gt_skipped += 1
+                    continue
 
-            # 拆成 list 以适配 MONAI 度量器
-            y_pred_list = list(torch.unbind(y_pred_oh, dim=0))  # N*[2,H,W]
-            y_list      = list(torch.unbind(y_oh,      dim=0))  # N*[2,H,W]
-            # 度量器要求每个样本是 [1,2,H,W]，补一个 batch 维
-            y_pred_list = [p.unsqueeze(0) for p in y_pred_list]  # N*[1,2,H,W]
-            y_list      = [t.unsqueeze(0) for t in y_list]       # N*[1,2,H,W]
+                tp = ((p == 1) & (t == 1)).sum().float()
+                fp = ((p == 1) & (t == 0)).sum().float()
+                fn = ((p == 0) & (t == 1)).sum().float()
 
-            dice_metric(y_pred=y_pred_list, y=y_list)
-            precision_metric(y_pred=y_pred_list, y=y_list)
-            recall_metric(y_pred=y_pred_list, y=y_list)
-            specificity_metric(y_pred=y_pred_list, y=y_list)
+                denom_dice = (2 * tp + fp + fn)
+                denom_iou  = (tp + fp + fn)
 
-            # 计算 mIoU（基于二值）
-            for p, t in zip(y_pred_list, y_list):
-                pb = p[:, 1].flatten().int()
-                tb = t[:, 1].flatten().int()
-                inter = (pb & tb).sum().float()
-                union = (pb | tb).sum().float()
-                if union > 0:
-                    ious.append((inter / union).item())
+                dice = (2 * tp) / (denom_dice + 1e-6)
+                iou  = tp / (denom_iou + 1e-6)
+
+                # 记录
+                ious.append(iou.item())
+                # 你也可以顺便求平均 Dice（这里直接重用 dice_metric 也行）
+                dice_metric(y_pred=[(p == 1).unsqueeze(0).unsqueeze(0).float()],
+                            y=[t.eq(1).unsqueeze(0).unsqueeze(0).float()])
 
     avg_val_loss = val_loss / max(1, len(val_loader))
-    fg_dice = float(torch.as_tensor(dice_metric.aggregate()).mean().item())
-    precision_val   = float(torch.as_tensor(precision_metric.aggregate()).mean().item())
-    recall_val      = float(torch.as_tensor(recall_metric.aggregate()).mean().item())
-    specificity_val = float(torch.as_tensor(specificity_metric.aggregate()).mean().item())
-    miou_val        = float(torch.tensor(ious).mean().item()) if ious else 0.0
+    fg_dice = float(torch.as_tensor(dice_metric.aggregate()).mean().item()) if len(ious) > 0 else float('nan')
+    miou_val = float(torch.tensor(ious).mean().item()) if ious else float('nan')
 
-    print(f"Val Loss: {avg_val_loss:.4f}, Dice={fg_dice:.4f}, "
-          f"Precision={precision_val:.4f}, Recall={recall_val:.4f}, mIoU={miou_val:.4f}")
-
+    print(f"Val Loss: {avg_val_loss:.4f}, Dice={fg_dice:.4f}, mIoU={miou_val:.4f}")
     wandb.log({
-        "Loss/train": avg_train_loss, "Loss/val": avg_val_loss,
-        "Dice/val": fg_dice, "Precision/val": precision_val, "Recall/val": recall_val,
-        "Specificity/val": specificity_val, "mIoU/val": miou_val
+        "Loss/val": avg_val_loss,
+        "Dice/val": fg_dice,
+        "mIoU/val": miou_val,
+        "Val/empty_gt_skipped": empty_gt_skipped,
     }, step=epoch+1)
 
     if fg_dice > best_dice:
