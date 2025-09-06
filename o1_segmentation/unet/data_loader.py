@@ -84,7 +84,7 @@ def get_dataloaders(data_dir="./data/raw", batch_size=2, patch_size=(128, 128, 6
     train_loader = DataLoader(
         train_ds, batch_size=batch_size, shuffle=True,
         num_workers=2 if debug else 4,   # use less workers in debug mode
-        pin_memory=True, persistent_workers=not debug,
+        pin_memory=False, persistent_workers=not debug,
         collate_fn=list_data_collate
     )
     val_loader = DataLoader(
