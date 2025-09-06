@@ -9,16 +9,18 @@ from monai.data import Dataset
 def get_dataloaders(data_dir="./data/raw", batch_size=4, debug=False):
     images = sorted(glob.glob(os.path.join(data_dir, "images", "*.nii.gz")))
     labels = sorted(glob.glob(os.path.join(data_dir, "masks", "*.nii.gz")))
+    
     if debug:
-        images, labels = images[:4], labels[:4]
-        batch_size = max(2, batch_size)  # 避免 BN 报错
+        # 调试时多取一些样本，避免 BN 报错
+        images, labels = images[:8], labels[:8]
+        batch_size = max(2, batch_size)
 
     n_train = int(0.8 * len(images))
     train_files = [{"image": i, "label": l} for i, l in zip(images[:n_train], labels[:n_train])]
     val_files   = [{"image": i, "label": l} for i, l in zip(images[n_train:], labels[n_train:])]
 
     # 根据 debug 模式切换裁剪大小
-    roi_size = (256, 256, 1) if debug else (128, 128, 1)
+    roi_size = (360, 360, 1) if debug else (128, 128, 1)
 
     train_transforms = Compose([
         LoadImaged(keys=["image", "label"]),
