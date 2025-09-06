@@ -69,7 +69,7 @@ train_loader, val_loader = get_dataloaders(
 # Model
 # ==============================
 model = deeplabv3_resnet50(weights=None, num_classes=2)
-# 修改输入通道
+# 修改输入通道 (CT 单通道)
 old_conv = model.backbone.conv1
 model.backbone.conv1 = torch.nn.Conv2d(
     in_channels=1,
@@ -112,12 +112,12 @@ for epoch in trange(start_epoch, num_epochs, desc="Total Progress"):
     model.train()
     train_loss = 0.0
     for step, batch in enumerate(tqdm(train_loader, desc="Training", leave=False)):
-        images = batch["image"].to(device)   # [B, 1, H, W]
-        masks  = batch["label"].to(device).long() # [B, H, W]
+        images = batch["image"].to(device)   # [B,1,H,W]
+        masks  = batch["label"].unsqueeze(1).to(device).long()  # ⭐ [B,1,H,W]
 
         optimizer.zero_grad(set_to_none=True)
         with torch.amp.autocast("cuda", enabled=(device.type == "cuda")):
-            outputs = model(images)["out"]   # DeepLabV3+ 返回dict
+            outputs = model(images)["out"]   # [B,2,H,W]
             loss = loss_fn(outputs, masks)
 
         scaler.scale(loss).backward()
@@ -137,16 +137,16 @@ for epoch in trange(start_epoch, num_epochs, desc="Total Progress"):
     with torch.no_grad():
         for batch in tqdm(val_loader, desc="Validation", leave=False):
             images = batch["image"].to(device)
-            masks  = batch["label"].to(device).long()
+            masks  = batch["label"].unsqueeze(1).to(device).long()  # ⭐ [B,1,H,W]
 
             with torch.amp.autocast("cuda", enabled=(device.type == "cuda")):
                 outputs = model(images)["out"]
                 loss = loss_fn(outputs, masks)
             val_loss += loss.item()
 
-            # ---- 修复 y_pred / y 形状不一致 ----
-            y_pred_list = [post_pred(o.unsqueeze(0)) for o in torch.unbind(outputs, dim=0)]
-            y_list      = [post_label(y.unsqueeze(0)) for y in torch.unbind(masks, dim=0)]
+            # ---- 拆 batch 保持维度一致 ----
+            y_pred_list = [post_pred(o.unsqueeze(0)) for o in outputs]  # [2,H,W] → one-hot
+            y_list      = [post_label(y.unsqueeze(0)) for y in masks]   # [1,H,W] → one-hot
 
             dice_metric(y_pred=y_pred_list, y=y_list)
             precision_metric(y_pred=y_pred_list, y=y_list)
