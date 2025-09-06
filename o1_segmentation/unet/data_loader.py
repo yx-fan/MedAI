@@ -11,7 +11,7 @@ from monai.transforms import (
     RandFlipd,
     RandRotate90d,
     EnsureTyped,
-    RandRotate,
+    RandRotated,
     RandZoom,
     RandGaussianNoised,
     RandAdjustContrastd,
@@ -60,7 +60,7 @@ def get_dataloaders(data_dir="./data/raw", batch_size=2, patch_size=(128, 128, 6
         ),
         RandFlipd(keys=["image", "label"], prob=0.5, spatial_axis=[0, 1]),  # Flip along both spatial axes
         RandRotate90d(keys=["image", "label"], prob=0.5, max_k=3),          # Rotate 90, 180, or 270 degrees
-        RandRotate(keys=["image", "label"], range_x=0.1, range_y=0.1, range_z=0.1, prob=0.3),  # small random rotation
+        RandRotated(keys=["image", "label"], range_x=0.1, range_y=0.1, range_z=0.1, prob=0.3, mode=("bilinear", "nearest")),  # small random rotation
         RandZoom(keys=["image", "label"], min_zoom=0.9, max_zoom=1.1, prob=0.3),                # random zoom
         RandGaussianNoised(keys=["image"], prob=0.15, mean=0.0, std=0.01),                      # random gaussian noise
         RandAdjustContrastd(keys=["image"], prob=0.3, gamma=(0.7, 1.5)),                        # random contrast adjust
