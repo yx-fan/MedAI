@@ -8,7 +8,7 @@ from torch.optim.lr_scheduler import CosineAnnealingLR, LinearLR, SequentialLR
 from monai.networks.nets import UNet
 from monai.losses import DiceFocalLoss
 import torch.nn as nn
-from monai.losses import TverskyLoss, BoundaryLoss
+from monai.losses import TverskyLoss, HausdorffDTLoss
 from monai.metrics import DiceMetric, HausdorffDistanceMetric
 from monai.metrics import ConfusionMatrixMetric
 from monai.inferers import sliding_window_inference
@@ -141,10 +141,10 @@ loss_ftv = FocalTverskyLossCompat(
     to_onehot_y=True, softmax=True,
     alpha=0.7, beta=0.3, gamma=0.75
 )
-loss_boundary = BoundaryLoss(
+loss_boundary = HausdorffDTLoss(
     include_background=False,
     to_onehot_y=True, softmax=True,
-    distance_metric="euclidean"
+    alpha=2.0
 )
 
 def total_loss(pred, target):
