@@ -14,7 +14,7 @@ from monai.data import decollate_batch
 
 import torch.backends.cudnn as cudnn
 from tqdm import tqdm, trange
-from data_loader_2d import get_dataloaders   # 👈 我会写一个2D版 dataloader
+from data_loader_2d import get_dataloaders
 import wandb
 import matplotlib.pyplot as plt
 from torch.utils.tensorboard import SummaryWriter
