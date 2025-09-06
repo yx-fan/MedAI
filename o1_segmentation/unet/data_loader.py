@@ -15,7 +15,6 @@ from monai.transforms import (
     RandZoom,
     RandGaussianNoised,
     RandAdjustContrastd,
-    RandElasticd,
 )
 from monai.data import Dataset, list_data_collate
 
@@ -65,7 +64,6 @@ def get_dataloaders(data_dir="./data/raw", batch_size=2, patch_size=(128, 128, 6
         RandZoom(keys=["image", "label"], min_zoom=0.9, max_zoom=1.1, prob=0.3),                # random zoom
         RandGaussianNoised(keys=["image"], prob=0.15, mean=0.0, std=0.01),                      # random gaussian noise
         RandAdjustContrastd(keys=["image"], prob=0.3, gamma=(0.7, 1.5)),                        # random contrast adjust
-        RandElasticd(keys=["image", "label"], prob=0.15, sigma_range=(5, 7), magnitude_range=(50, 100)),  # elastic deformation
         EnsureTyped(keys=["image", "label"]),
     ])
 
