@@ -10,7 +10,6 @@ from torchvision.models.segmentation import deeplabv3_resnet50
 from monai.losses import DiceCELoss
 from monai.metrics import DiceMetric, ConfusionMatrixMetric
 from monai.transforms import AsDiscrete
-from monai.data import decollate_batch
 
 import torch.backends.cudnn as cudnn
 from tqdm import tqdm, trange
@@ -147,8 +146,10 @@ for epoch in trange(start_epoch, num_epochs, desc="Total Progress"):
                 loss = loss_fn(outputs, masks)
             val_loss += loss.item()
 
-            y_pred_list = [post_pred(o) for o in decollate_batch(outputs)]
-            y_list      = [post_label(y) for y in decollate_batch(masks)]
+            # ---- 修复 decollate_batch 报错，改成手动拆 batch ----
+            y_pred_list = [post_pred(o.unsqueeze(0)) for o in outputs]  # 遍历 batch
+            y_list      = [post_label(y.unsqueeze(0)) for y in masks]   # 遍历 batch
+
             dice_metric(y_pred=y_pred_list, y=y_list)
             precision_metric(y_pred=y_pred_list, y=y_list)
             recall_metric(y_pred=y_pred_list, y=y_list)
@@ -159,7 +160,8 @@ for epoch in trange(start_epoch, num_epochs, desc="Total Progress"):
                 true_bin = t[:,1].flatten().int()
                 inter = (pred_bin & true_bin).sum().float()
                 union = (pred_bin | true_bin).sum().float()
-                if union>0: ious.append((inter/union).item())
+                if union > 0:
+                    ious.append((inter/union).item())
 
     avg_val_loss = val_loss / max(1, len(val_loader))
     fg_dice = float(torch.as_tensor(dice_metric.aggregate()).mean().item())
