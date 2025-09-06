@@ -155,13 +155,14 @@ def main():
 
             # --- 可视化 ---
             img_np = batch["image"].numpy()[0]  # [1,D,H,W]
+
             # 构造 one-hot 方便显示
             pred_bin = pred.numpy()[0, 0]       # [D,H,W]
             pred_np = np.stack([1 - pred_bin, pred_bin], axis=0).astype(np.uint8)
+
             gt_np = None
             if args.label and "label" in batch:
-                lbl = batch["label"].numpy()[0]  # [1,D,H,W]
-                lbl = np.squeeze(lbl, axis=0)    # [D,H,W]
+                lbl = batch["label"].numpy()[0, 0]  # [D,H,W]
                 gt_np = np.stack([1 - lbl, lbl], axis=0).astype(np.uint8)
 
             out_png = os.path.join(args.out_dir, f"{base}_viz.png")
