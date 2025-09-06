@@ -11,16 +11,20 @@ def get_dataloaders(data_dir="./data/raw", batch_size=4, debug=False):
     labels = sorted(glob.glob(os.path.join(data_dir, "masks", "*.nii.gz")))
     if debug:
         images, labels = images[:4], labels[:4]
+        batch_size = max(2, batch_size)  # 避免 BN 报错
 
     n_train = int(0.8 * len(images))
     train_files = [{"image": i, "label": l} for i, l in zip(images[:n_train], labels[:n_train])]
     val_files   = [{"image": i, "label": l} for i, l in zip(images[n_train:], labels[n_train:])]
 
+    # 根据 debug 模式切换裁剪大小
+    roi_size = (256, 256, 1) if debug else (128, 128, 1)
+
     train_transforms = Compose([
         LoadImaged(keys=["image", "label"]),
         EnsureChannelFirstd(keys=["image", "label"]),
         ScaleIntensityRanged(keys=["image"], a_min=-100, a_max=94, b_min=0.0, b_max=1.0),
-        RandSpatialCropd(keys=["image", "label"], roi_size=(128, 128, 1), random_size=False),
+        RandSpatialCropd(keys=["image", "label"], roi_size=roi_size, random_size=False),
         RandFlipd(keys=["image", "label"], prob=0.5, spatial_axis=[0, 1]),
         RandRotate90d(keys=["image", "label"], prob=0.5, max_k=3),
         EnsureTyped(keys=["image", "label"]),
@@ -30,7 +34,7 @@ def get_dataloaders(data_dir="./data/raw", batch_size=4, debug=False):
         LoadImaged(keys=["image", "label"]),
         EnsureChannelFirstd(keys=["image", "label"]),
         ScaleIntensityRanged(keys=["image"], a_min=-100, a_max=94, b_min=0.0, b_max=1.0),
-        RandSpatialCropd(keys=["image", "label"], roi_size=(128, 128, 1), random_size=False),
+        RandSpatialCropd(keys=["image", "label"], roi_size=roi_size, random_size=False),
         EnsureTyped(keys=["image", "label"]),
         Lambdad(keys=["image", "label"], func=lambda x: x.squeeze(-1)),  # 去掉 D=1 维度
     ])
