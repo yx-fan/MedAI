@@ -6,7 +6,7 @@ from torch.optim.lr_scheduler import CosineAnnealingLR, LinearLR, SequentialLR
 from torchvision.models.segmentation import deeplabv3_resnet50
 
 from monai.losses import DiceCELoss
-from monai.metrics import DiceMetric, ConfusionMatrixMetric
+from monai.metrics import DiceMetric
 
 import torch.backends.cudnn as cudnn
 from tqdm import tqdm, trange
@@ -14,6 +14,7 @@ from data_loader_2d import get_dataloaders
 import wandb
 from torch.utils.tensorboard import SummaryWriter
 from datetime import datetime
+
 
 # ==============================
 # Argparse
@@ -32,7 +33,7 @@ cudnn.benchmark = True
 print(f"[INFO] Training on {device}")
 
 base_epochs = 100 if not args.debug else 3
-num_epochs = base_epochs
+num_epochs = base_epochs + max(0, args.extra_epochs)
 start_epoch = 0
 learning_rate = 1e-4
 save_dir = "data/deeplab_debug" if args.debug else "data/deeplab"
@@ -44,7 +45,7 @@ best_dice = -1.0
 # ==============================
 wandb.init(
     project="rectal-cancer-deeplab",
-    config={"epochs": num_epochs, "batch_size": 4, "lr": learning_rate, "arch": "DeepLabV3+"},
+    config={"epochs": num_epochs, "batch_size": 4 if not args.debug else 2, "lr": learning_rate, "arch": "DeepLabV3"},
     settings=wandb.Settings(init_timeout=300, start_method="thread")
 )
 log_dir = os.path.join("tb_logs", datetime.now().strftime("%Y%m%d-%H%M%S"))
@@ -87,15 +88,20 @@ scheduler = SequentialLR(optimizer, schedulers=[warmup, cosine], milestones=[5])
 # ==============================
 # Metrics
 # ==============================
-dice_metric        = DiceMetric(include_background=False, reduction="none")
-precision_metric   = ConfusionMatrixMetric(metric_name="precision",   reduction="mean", include_background=False)
-recall_metric      = ConfusionMatrixMetric(metric_name="recall",      reduction="mean", include_background=False)
-specificity_metric = ConfusionMatrixMetric(metric_name="specificity", reduction="mean", include_background=False)
+dice_metric = DiceMetric(include_background=False, reduction="none")
 
 # ==============================
 # AMP Scaler
 # ==============================
 scaler = torch.amp.GradScaler("cuda", enabled=(device.type == "cuda"))
+
+# ==============================
+# (Optional) Resume
+# ==============================
+if args.resume and os.path.isfile(args.resume):
+    state = torch.load(args.resume, map_location=device)
+    model.load_state_dict(state)
+    print(f"[INFO] Resumed from {args.resume}")
 
 # ==============================
 # Training Loop
@@ -105,7 +111,7 @@ for epoch in trange(start_epoch, num_epochs, desc="Total Progress"):
     model.train()
     train_loss = 0.0
     for step, batch in enumerate(tqdm(train_loader, desc="Training", leave=False)):
-        images = batch["image"].to(device)              # [B,1,H,W]
+        images = batch["image"].to(device)                    # [B,1,H,W]
         masks  = batch["label"].unsqueeze(1).to(device).long()  # [B,1,H,W]
 
         optimizer.zero_grad(set_to_none=True)
@@ -124,56 +130,73 @@ for epoch in trange(start_epoch, num_epochs, desc="Total Progress"):
     # -------- Validation --------
     model.eval()
     val_loss = 0.0
-    dice_metric.reset(); precision_metric.reset(); recall_metric.reset(); specificity_metric.reset()
+    dice_metric.reset()
     ious = []
 
+    # 手动累计 TP/FP/FN/TN（前景=类1）
+    tp_total = fp_total = fn_total = tn_total = 0
+
     with torch.no_grad():
-        empty_gt_skipped = 0
         for batch in tqdm(val_loader, desc="Validation", leave=False):
-            images = batch["image"].to(device)                 # [B,1,H,W]
-            masks  = batch["label"].unsqueeze(1).to(device)    # [B,1,H,W] (索引在通道维)
+            images = batch["image"].to(device)                       # [B,1,H,W]
+            masks  = batch["label"].unsqueeze(1).to(device).long()   # [B,1,H,W]
 
             with torch.amp.autocast("cuda", enabled=(device.type == "cuda")):
-                logits = model(images)["out"]                  # [B,2,H,W]
-                loss = loss_fn(logits, masks)                  # DiceCE 仍然用 one-hot 计算
+                outputs = model(images)["out"]   # [B,2,H,W]
+                loss = loss_fn(outputs, masks)
             val_loss += loss.item()
 
-            # ===== 统一的“索引图”指标计算 =====
-            pred_idx = logits.argmax(dim=1)                    # [B,H,W] {0,1}
-            true_idx = masks.squeeze(1)                        # [B,H,W] {0,1}
+            # —— 显式把预测与标签都转为 one-hot 的 [B,2,H,W] —— #
+            pred = torch.argmax(outputs, dim=1)  # [B,H,W]
+            y_pred_oh = torch.nn.functional.one_hot(pred, num_classes=2).permute(0, 3, 1, 2).float()  # [B,2,H,W]
 
-            for p, t in zip(pred_idx, true_idx):
-                # 跳过全空 GT（否则 Dice/IoU 会假性偏高/偏低）
-                if t.sum() == 0:
-                    empty_gt_skipped += 1
-                    continue
+            lbl  = masks.squeeze(1)  # [B,H,W]
+            y_oh = torch.nn.functional.one_hot(lbl,  num_classes=2).permute(0, 3, 1, 2).float()       # [B,2,H,W]
 
-                tp = ((p == 1) & (t == 1)).sum().float()
-                fp = ((p == 1) & (t == 0)).sum().float()
-                fn = ((p == 0) & (t == 1)).sum().float()
+            # 拆成 list 以适配 MONAI 度量器（每个样本形状 [1,2,H,W]）
+            y_pred_list = [p.unsqueeze(0) for p in torch.unbind(y_pred_oh, dim=0)]
+            y_list      = [t.unsqueeze(0) for t in torch.unbind(y_oh,      dim=0)]
 
-                denom_dice = (2 * tp + fp + fn)
-                denom_iou  = (tp + fp + fn)
+            # Dice
+            dice_metric(y_pred=y_pred_list, y=y_list)
 
-                dice = (2 * tp) / (denom_dice + 1e-6)
-                iou  = tp / (denom_iou + 1e-6)
+            # 手动算 P / R / Spe 与 mIoU（基于布尔张量）
+            for p, t in zip(y_pred_list, y_list):
+                # p,t: [1,2,H,W]，取前景通道 -> [H,W] -> 展平
+                pb = (p[:, 1] > 0.5).flatten()   # bool
+                tb = (t[:, 1] > 0.5).flatten()   # bool
 
-                # 记录
-                ious.append(iou.item())
-                # 你也可以顺便求平均 Dice（这里直接重用 dice_metric 也行）
-                dice_metric(y_pred=[(p == 1).unsqueeze(0).unsqueeze(0).float()],
-                            y=[t.eq(1).unsqueeze(0).unsqueeze(0).float()])
+                tp = (pb & tb).sum().item()
+                fp = (pb & ~tb).sum().item()
+                fn = (~pb & tb).sum().item()
+                tn = (~pb & ~tb).sum().item()
+
+                tp_total += tp; fp_total += fp; fn_total += fn; tn_total += tn
+
+                inter = (pb & tb).sum().item()
+                union = (pb | tb).sum().item()
+                if union > 0:
+                    ious.append(inter / union)
 
     avg_val_loss = val_loss / max(1, len(val_loader))
-    fg_dice = float(torch.as_tensor(dice_metric.aggregate()).mean().item()) if len(ious) > 0 else float('nan')
-    miou_val = float(torch.tensor(ious).mean().item()) if ious else float('nan')
+    fg_dice = float(torch.as_tensor(dice_metric.aggregate()).mean().item())
 
-    print(f"Val Loss: {avg_val_loss:.4f}, Dice={fg_dice:.4f}, mIoU={miou_val:.4f}")
+    precision_val   = tp_total / (tp_total + fp_total + 1e-8)
+    recall_val      = tp_total / (tp_total + fn_total + 1e-8)
+    specificity_val = tn_total / (tn_total + fp_total + 1e-8)
+    miou_val        = float(sum(ious) / len(ious)) if ious else 0.0
+
+    # 额外 sanity check：用 IoU 反推 Dice（不参与日志，可自行打印核对）
+    # dice_from_iou = (2 * miou_val) / (1 + miou_val + 1e-8)
+
+    print(f"Val Loss: {avg_val_loss:.4f}, Dice={fg_dice:.4f}, "
+          f"Precision={precision_val:.4f}, Recall={recall_val:.4f}, "
+          f"Specificity={specificity_val:.4f}, mIoU={miou_val:.4f}")
+
     wandb.log({
-        "Loss/val": avg_val_loss,
-        "Dice/val": fg_dice,
-        "mIoU/val": miou_val,
-        "Val/empty_gt_skipped": empty_gt_skipped,
+        "Loss/train": avg_train_loss, "Loss/val": avg_val_loss,
+        "Dice/val": fg_dice, "Precision/val": precision_val, "Recall/val": recall_val,
+        "Specificity/val": specificity_val, "mIoU/val": miou_val
     }, step=epoch+1)
 
     if fg_dice > best_dice:
