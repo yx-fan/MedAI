@@ -7,6 +7,8 @@ from torch.optim import AdamW
 from torch.optim.lr_scheduler import CosineAnnealingLR, LinearLR, SequentialLR
 from monai.networks.nets import UNet
 from monai.losses import DiceFocalLoss
+import torch.nn as nn
+from monai.losses import TverskyLoss, BoundaryLoss
 from monai.metrics import DiceMetric, HausdorffDistanceMetric
 from monai.metrics import ConfusionMatrixMetric
 from monai.inferers import sliding_window_inference
@@ -19,6 +21,32 @@ import wandb
 import matplotlib.pyplot as plt
 from torch.utils.tensorboard import SummaryWriter
 from monai.losses import DiceCELoss
+
+# ==============================
+# FocalTverskyLossCompat (newly added)
+# ==============================
+class FocalTverskyLossCompat(nn.Module):
+    """
+    Focal Tversky Loss for 3D medical image segmentation.
+    Combines Tversky loss with a focal component to focus on hard examples.
+    """
+    def __init__(self, include_background=False, to_onehot_y=True, softmax=True,
+                 alpha=0.7, beta=0.3, gamma=0.75, reduction="mean"):
+        super().__init__()
+        self.gamma = gamma
+        self.tversky = TverskyLoss(
+            include_background=include_background,
+            to_onehot_y=to_onehot_y,
+            softmax=softmax,
+            alpha=alpha,
+            beta=beta,
+            reduction=reduction,
+        )
+
+    def forward(self, pred, target):
+        base = self.tversky(pred, target)
+        return base ** self.gamma
+
 
 # ==============================
 # Post transforms
@@ -98,7 +126,30 @@ model = UNet(
 # Loss, Optimizer, Scheduler
 # ==============================
 # loss_fn = DiceFocalLoss(to_onehot_y=True, softmax=True, gamma=2.0)
-loss_fn = DiceCELoss(to_onehot_y=True, softmax=True)
+# loss_fn = DiceCELoss(to_onehot_y=True, softmax=True)
+# --- Modified: combined loss ---
+ce_weight = torch.tensor([0.2, 0.8], device=device)
+
+loss_dicece = DiceCELoss(
+    include_background=False,
+    to_onehot_y=True, softmax=True,
+    lambda_dice=0.7, lambda_ce=0.3,
+    ce_weight=ce_weight
+)
+loss_ftv = FocalTverskyLossCompat(
+    include_background=False,
+    to_onehot_y=True, softmax=True,
+    alpha=0.7, beta=0.3, gamma=0.75
+)
+loss_boundary = BoundaryLoss(
+    include_background=False,
+    to_onehot_y=True, softmax=True,
+    distance_metric="euclidean"
+)
+
+def total_loss(pred, target):
+    return 0.5 * loss_dicece(pred, target) + 0.4 * loss_ftv(pred, target) + 0.1 * loss_boundary(pred, target)
+
 optimizer = AdamW(model.parameters(), lr=learning_rate, weight_decay=1e-5)
 
 warmup = LinearLR(optimizer, start_factor=1e-2, total_iters=5)
@@ -207,7 +258,8 @@ for epoch in trange(start_epoch, num_epochs, desc="Total Progress"):
 
         with torch.amp.autocast("cuda", enabled=(device.type == "cuda")):
             outputs = model(images)
-            loss = loss_fn(outputs, masks)
+            loss = total_loss(outputs, masks)  # --- Modified: use total_loss ---
+
         scaler.scale(loss).backward()
 
         total_norm = 0.0
@@ -216,6 +268,10 @@ for epoch in trange(start_epoch, num_epochs, desc="Total Progress"):
                 param_norm = p.grad.data.norm(2).item()
                 total_norm += param_norm ** 2
         grad_norm = (total_norm ** 0.5)
+
+        # --- Modified: gradient clipping ---
+        scaler.unscale_(optimizer)
+        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=5.0)
 
         scaler.step(optimizer)
         scaler.update()
@@ -248,9 +304,10 @@ for epoch in trange(start_epoch, num_epochs, desc="Total Progress"):
                     roi_size=(64, 64, 32) if args.debug else (128, 128, 64),
                     sw_batch_size=1 if args.debug else 2,
                     predictor=model,
-                    overlap=0.25
+                    overlap=0.5,          # --- Modified: increased overlap
+                    mode="gaussian"       # --- Modified: gaussian blending
                 )
-                loss = loss_fn(outputs, masks)
+                loss = total_loss(outputs, masks)  # --- Modified: use total_loss ---
 
             val_loss += loss.item()
 
@@ -263,14 +320,11 @@ for epoch in trange(start_epoch, num_epochs, desc="Total Progress"):
             # miou_metric(y_pred=y_pred_list, y=y_list)
             specificity_metric(y_pred=y_pred_list, y=y_list)
             # --- Manual mIoU calculation ---
-            # Flatten predictions and labels to binary (ignoring background channel 0)
             for p, t in zip(y_pred_list, y_list):
                 pred_bin = (p[:, 1] > 0.5).flatten().int()
                 true_bin = t[:, 1].flatten().int()
-                
                 intersection = (pred_bin & true_bin).sum().float()
                 union = (pred_bin | true_bin).sum().float()
-                
                 if union > 0:
                     ious.append((intersection / union).item())
             
