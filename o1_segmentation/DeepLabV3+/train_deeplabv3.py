@@ -7,7 +7,6 @@ from torchvision.models.segmentation import deeplabv3_resnet50
 
 from monai.losses import DiceCELoss
 from monai.metrics import DiceMetric, ConfusionMatrixMetric
-from monai.transforms import AsDiscrete
 
 import torch.backends.cudnn as cudnn
 from tqdm import tqdm, trange
@@ -15,12 +14,6 @@ from data_loader_2d import get_dataloaders
 import wandb
 from torch.utils.tensorboard import SummaryWriter
 from datetime import datetime
-
-# ==============================
-# Post transforms
-# ==============================
-post_pred = AsDiscrete(argmax=True, to_onehot=2)
-post_label = AsDiscrete(to_onehot=2)
 
 # ==============================
 # Argparse
@@ -69,7 +62,7 @@ train_loader, val_loader = get_dataloaders(
 # Model
 # ==============================
 model = deeplabv3_resnet50(weights=None, num_classes=2)
-# 修改输入通道 (CT 单通道)
+# 单通道输入（CT）
 old_conv = model.backbone.conv1
 model.backbone.conv1 = torch.nn.Conv2d(
     in_channels=1,
@@ -84,7 +77,7 @@ model = model.to(device)
 # ==============================
 # Loss, Optimizer, Scheduler
 # ==============================
-loss_fn = DiceCELoss(to_onehot_y=True, softmax=True)
+loss_fn = DiceCELoss(to_onehot_y=True, softmax=True)  # 训练时：预测 [B,2,H,W], 标签 [B,1,H,W]
 optimizer = AdamW(model.parameters(), lr=learning_rate, weight_decay=1e-5)
 
 warmup = LinearLR(optimizer, start_factor=1e-2, total_iters=5)
@@ -94,9 +87,9 @@ scheduler = SequentialLR(optimizer, schedulers=[warmup, cosine], milestones=[5])
 # ==============================
 # Metrics
 # ==============================
-dice_metric = DiceMetric(include_background=False, reduction="none")
-precision_metric   = ConfusionMatrixMetric(metric_name="precision", reduction="mean", include_background=False)
-recall_metric      = ConfusionMatrixMetric(metric_name="recall", reduction="mean", include_background=False)
+dice_metric        = DiceMetric(include_background=False, reduction="none")
+precision_metric   = ConfusionMatrixMetric(metric_name="precision",   reduction="mean", include_background=False)
+recall_metric      = ConfusionMatrixMetric(metric_name="recall",      reduction="mean", include_background=False)
 specificity_metric = ConfusionMatrixMetric(metric_name="specificity", reduction="mean", include_background=False)
 
 # ==============================
@@ -112,7 +105,7 @@ for epoch in trange(start_epoch, num_epochs, desc="Total Progress"):
     model.train()
     train_loss = 0.0
     for step, batch in enumerate(tqdm(train_loader, desc="Training", leave=False)):
-        images = batch["image"].to(device)   # [B,1,H,W]
+        images = batch["image"].to(device)              # [B,1,H,W]
         masks  = batch["label"].unsqueeze(1).to(device).long()  # [B,1,H,W]
 
         optimizer.zero_grad(set_to_none=True)
@@ -136,38 +129,50 @@ for epoch in trange(start_epoch, num_epochs, desc="Total Progress"):
 
     with torch.no_grad():
         for batch in tqdm(val_loader, desc="Validation", leave=False):
-            images = batch["image"].to(device)             # [B,1,H,W]
-            masks  = batch["label"].unsqueeze(1).to(device).long()  # [B,1,H,W]
+            images = batch["image"].to(device)                     # [B,1,H,W]
+            masks  = batch["label"].unsqueeze(1).to(device).long() # [B,1,H,W]
 
             with torch.amp.autocast("cuda", enabled=(device.type == "cuda")):
                 outputs = model(images)["out"]   # [B,2,H,W]
                 loss = loss_fn(outputs, masks)
             val_loss += loss.item()
 
-            # ---- 修复维度不一致 ----
-            y_pred_list = [post_pred(o.unsqueeze(0)) for o in outputs]   # [1,2,H,W]
-            y_list      = [post_label(y) for y in masks]                 # [1,2,H,W]
+            # —— 最小修改：显式把预测与标签都转为 one-hot 的 [B,2,H,W] —— #
+            # 预测 argmax -> one-hot
+            pred = torch.argmax(outputs, dim=1)  # [B,H,W]
+            y_pred_oh = torch.nn.functional.one_hot(pred, num_classes=2).permute(0, 3, 1, 2).float()  # [B,2,H,W]
+
+            # 标签 squeeze -> one-hot
+            lbl  = masks.squeeze(1)  # [B,H,W]
+            y_oh = torch.nn.functional.one_hot(lbl,  num_classes=2).permute(0, 3, 1, 2).float()       # [B,2,H,W]
+
+            # 拆成 list 以适配 MONAI 度量器
+            y_pred_list = list(torch.unbind(y_pred_oh, dim=0))  # N*[2,H,W]
+            y_list      = list(torch.unbind(y_oh,      dim=0))  # N*[2,H,W]
+            # 度量器要求每个样本是 [1,2,H,W]，补一个 batch 维
+            y_pred_list = [p.unsqueeze(0) for p in y_pred_list]  # N*[1,2,H,W]
+            y_list      = [t.unsqueeze(0) for t in y_list]       # N*[1,2,H,W]
 
             dice_metric(y_pred=y_pred_list, y=y_list)
             precision_metric(y_pred=y_pred_list, y=y_list)
             recall_metric(y_pred=y_pred_list, y=y_list)
             specificity_metric(y_pred=y_pred_list, y=y_list)
 
-            # 计算 mIoU
+            # 计算 mIoU（基于二值）
             for p, t in zip(y_pred_list, y_list):
-                pred_bin = p[:,1].flatten().int()
-                true_bin = t[:,1].flatten().int()
-                inter = (pred_bin & true_bin).sum().float()
-                union = (pred_bin | true_bin).sum().float()
+                pb = p[:, 1].flatten().int()
+                tb = t[:, 1].flatten().int()
+                inter = (pb & tb).sum().float()
+                union = (pb | tb).sum().float()
                 if union > 0:
-                    ious.append((inter/union).item())
+                    ious.append((inter / union).item())
 
     avg_val_loss = val_loss / max(1, len(val_loader))
     fg_dice = float(torch.as_tensor(dice_metric.aggregate()).mean().item())
-    precision_val = float(torch.as_tensor(precision_metric.aggregate()).mean().item())
-    recall_val = float(torch.as_tensor(recall_metric.aggregate()).mean().item())
+    precision_val   = float(torch.as_tensor(precision_metric.aggregate()).mean().item())
+    recall_val      = float(torch.as_tensor(recall_metric.aggregate()).mean().item())
     specificity_val = float(torch.as_tensor(specificity_metric.aggregate()).mean().item())
-    miou_val = float(torch.tensor(ious).mean().item()) if ious else 0.0
+    miou_val        = float(torch.tensor(ious).mean().item()) if ious else 0.0
 
     print(f"Val Loss: {avg_val_loss:.4f}, Dice={fg_dice:.4f}, "
           f"Precision={precision_val:.4f}, Recall={recall_val:.4f}, mIoU={miou_val:.4f}")
