@@ -23,9 +23,10 @@ def get_dataloaders(data_dir="./data/raw", batch_size=4, debug=False):
     # 论文输入大小 224×224
     roi_size = (224, 224, 1)
 
+    # ---- Train transforms ----
     train_transforms = Compose([
         LoadImaged(keys=["image", "label"]),
-        EnsureChannelFirstd(keys=["image", "label"]),
+        EnsureChannelFirstd(keys=["image", "label"]),   # image: [1,H,W], label: [1,H,W]
         ScaleIntensityRanged(
             keys=["image"], a_min=-100, a_max=94,
             b_min=0.0, b_max=1.0
@@ -37,10 +38,10 @@ def get_dataloaders(data_dir="./data/raw", batch_size=4, debug=False):
         RandFlipd(keys=["image", "label"], prob=0.5, spatial_axis=[0, 1]),
         RandRotate90d(keys=["image", "label"], prob=0.5, max_k=3),
         EnsureTyped(keys=["image", "label"]),
-        Lambdad(keys="image", func=lambda x: x),             # 保持 [1,H,W]
-        Lambdad(keys="label", func=lambda x: x[0].long()),   # 去掉 channel，变成 [H,W] int
+        Lambdad(keys="label", func=lambda x: x.squeeze(0).long()),  # 去掉 C=1，label->[H,W]
     ])
 
+    # ---- Val transforms ----
     val_transforms = Compose([
         LoadImaged(keys=["image", "label"]),
         EnsureChannelFirstd(keys=["image", "label"]),
@@ -53,10 +54,10 @@ def get_dataloaders(data_dir="./data/raw", batch_size=4, debug=False):
             random_size=False
         ),
         EnsureTyped(keys=["image", "label"]),
-        Lambdad(keys="image", func=lambda x: x),             # 保持 [1,H,W]
-        Lambdad(keys="label", func=lambda x: x[0].long()),   # 去掉 channel，变成 [H,W] int
+        Lambdad(keys="label", func=lambda x: x.squeeze(0).long()),  # 同样去掉 C=1
     ])
 
+    # ---- Datasets / Loaders ----
     train_ds, val_ds = Dataset(train_files, train_transforms), Dataset(val_files, val_transforms)
     train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True, num_workers=4)
     val_loader   = DataLoader(val_ds, batch_size=1, shuffle=False, num_workers=4)
