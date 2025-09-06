@@ -26,35 +26,26 @@ def get_dataloaders(data_dir="./data/raw", batch_size=4, debug=False):
     # ---- Train transforms ----
     train_transforms = Compose([
         LoadImaged(keys=["image", "label"]),
-        EnsureChannelFirstd(keys=["image", "label"]),   # image: [1,H,W], label: [1,H,W]
-        ScaleIntensityRanged(
-            keys=["image"], a_min=-100, a_max=94,
-            b_min=0.0, b_max=1.0
-        ),
-        RandSpatialCropd(
-            keys=["image", "label"], roi_size=roi_size,
-            random_size=False
-        ),
+        EnsureChannelFirstd(keys=["image", "label"]),   # image: [1,H,W,D], label: [1,H,W,D]
+        ScaleIntensityRanged(keys=["image"], a_min=-100, a_max=94, b_min=0.0, b_max=1.0),
+        RandSpatialCropd(keys=["image", "label"], roi_size=roi_size, random_size=False),
         RandFlipd(keys=["image", "label"], prob=0.5, spatial_axis=[0, 1]),
         RandRotate90d(keys=["image", "label"], prob=0.5, max_k=3),
         EnsureTyped(keys=["image", "label"]),
-        Lambdad(keys="label", func=lambda x: x.squeeze(0).long()),  # 去掉 C=1，label->[H,W]
+        # ⭐ 关键修复：把 D=1 的维度去掉
+        Lambdad(keys="image", func=lambda x: x.squeeze(-1)),   # [1,H,W]
+        Lambdad(keys="label", func=lambda x: x.squeeze(0).squeeze(-1).long()),  # [H,W]
     ])
 
     # ---- Val transforms ----
     val_transforms = Compose([
         LoadImaged(keys=["image", "label"]),
         EnsureChannelFirstd(keys=["image", "label"]),
-        ScaleIntensityRanged(
-            keys=["image"], a_min=-100, a_max=94,
-            b_min=0.0, b_max=1.0
-        ),
-        RandSpatialCropd(
-            keys=["image", "label"], roi_size=roi_size,
-            random_size=False
-        ),
+        ScaleIntensityRanged(keys=["image"], a_min=-100, a_max=94, b_min=0.0, b_max=1.0),
+        RandSpatialCropd(keys=["image", "label"], roi_size=roi_size, random_size=False),
         EnsureTyped(keys=["image", "label"]),
-        Lambdad(keys="label", func=lambda x: x.squeeze(0).long()),  # 同样去掉 C=1
+        Lambdad(keys="image", func=lambda x: x.squeeze(-1)),   # [1,H,W]
+        Lambdad(keys="label", func=lambda x: x.squeeze(0).squeeze(-1).long()),  # [H,W]
     ])
 
     # ---- Datasets / Loaders ----
