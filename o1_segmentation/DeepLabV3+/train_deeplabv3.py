@@ -1,6 +1,4 @@
 import os
-import csv
-import time
 import torch
 import argparse
 from torch.optim import AdamW
@@ -15,7 +13,6 @@ import torch.backends.cudnn as cudnn
 from tqdm import tqdm, trange
 from data_loader_2d import get_dataloaders
 import wandb
-import matplotlib.pyplot as plt
 from torch.utils.tensorboard import SummaryWriter
 from datetime import datetime
 
@@ -63,8 +60,9 @@ writer = SummaryWriter(log_dir=log_dir)
 # ==============================
 # Data Loaders
 # ==============================
+batch_size = 4 if not args.debug else 2
 train_loader, val_loader = get_dataloaders(
-    data_dir="./data/raw", batch_size=4 if not args.debug else 2, debug=args.debug
+    data_dir="./data/raw", batch_size=batch_size, debug=args.debug
 )
 
 # ==============================
@@ -104,7 +102,7 @@ specificity_metric = ConfusionMatrixMetric(metric_name="specificity", reduction=
 # ==============================
 # AMP Scaler
 # ==============================
-scaler = torch.cuda.amp.GradScaler(enabled=(device.type=="cuda"))
+scaler = torch.amp.GradScaler("cuda", enabled=(device.type == "cuda"))
 
 # ==============================
 # Training Loop
@@ -118,7 +116,7 @@ for epoch in trange(start_epoch, num_epochs, desc="Total Progress"):
         masks  = batch["label"].to(device).long() # [B, H, W]
 
         optimizer.zero_grad(set_to_none=True)
-        with torch.cuda.amp.autocast(enabled=(device.type=="cuda")):
+        with torch.amp.autocast("cuda", enabled=(device.type == "cuda")):
             outputs = model(images)["out"]   # DeepLabV3+ 返回dict
             loss = loss_fn(outputs, masks)
 
@@ -141,14 +139,14 @@ for epoch in trange(start_epoch, num_epochs, desc="Total Progress"):
             images = batch["image"].to(device)
             masks  = batch["label"].to(device).long()
 
-            with torch.cuda.amp.autocast(enabled=(device.type=="cuda")):
+            with torch.amp.autocast("cuda", enabled=(device.type == "cuda")):
                 outputs = model(images)["out"]
                 loss = loss_fn(outputs, masks)
             val_loss += loss.item()
 
-            # ---- 修复 shape 不一致 ----
-            y_pred_list = [post_pred(o.unsqueeze(0)) for o in outputs]  # o: [2,H,W] → [1,2,H,W]
-            y_list      = [post_label(y) for y in masks]                # y: [H,W] → onehot [1,2,H,W]
+            # ---- 修复 y_pred / y 形状不一致 ----
+            y_pred_list = [post_pred(o) for o in outputs]  # outputs: [B,2,H,W]
+            y_list      = [post_label(y) for y in masks]   # masks:   [B,H,W]
 
             dice_metric(y_pred=y_pred_list, y=y_list)
             precision_metric(y_pred=y_pred_list, y=y_list)
@@ -170,7 +168,8 @@ for epoch in trange(start_epoch, num_epochs, desc="Total Progress"):
     specificity_val = float(torch.as_tensor(specificity_metric.aggregate()).mean().item())
     miou_val = float(torch.tensor(ious).mean().item()) if ious else 0.0
 
-    print(f"Val Loss: {avg_val_loss:.4f}, Dice={fg_dice:.4f}, Precision={precision_val:.4f}, Recall={recall_val:.4f}, mIoU={miou_val:.4f}")
+    print(f"Val Loss: {avg_val_loss:.4f}, Dice={fg_dice:.4f}, "
+          f"Precision={precision_val:.4f}, Recall={recall_val:.4f}, mIoU={miou_val:.4f}")
 
     wandb.log({
         "Loss/train": avg_train_loss, "Loss/val": avg_val_loss,
