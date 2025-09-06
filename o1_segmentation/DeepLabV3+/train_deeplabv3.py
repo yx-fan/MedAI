@@ -113,7 +113,7 @@ for epoch in trange(start_epoch, num_epochs, desc="Total Progress"):
     train_loss = 0.0
     for step, batch in enumerate(tqdm(train_loader, desc="Training", leave=False)):
         images = batch["image"].to(device)   # [B,1,H,W]
-        masks  = batch["label"].unsqueeze(1).to(device).long()  # ⭐ [B,1,H,W]
+        masks  = batch["label"].unsqueeze(1).to(device).long()  # [B,1,H,W]
 
         optimizer.zero_grad(set_to_none=True)
         with torch.amp.autocast("cuda", enabled=(device.type == "cuda")):
@@ -137,16 +137,16 @@ for epoch in trange(start_epoch, num_epochs, desc="Total Progress"):
     with torch.no_grad():
         for batch in tqdm(val_loader, desc="Validation", leave=False):
             images = batch["image"].to(device)
-            masks  = batch["label"].unsqueeze(1).to(device).long()  # ⭐ [B,1,H,W]
+            masks  = batch["label"].unsqueeze(1).to(device).long()  # [B,1,H,W]
 
             with torch.amp.autocast("cuda", enabled=(device.type == "cuda")):
                 outputs = model(images)["out"]
                 loss = loss_fn(outputs, masks)
             val_loss += loss.item()
 
-            # ---- 拆 batch 保持维度一致 ----
-            y_pred_list = [post_pred(o.unsqueeze(0)) for o in outputs]  # [2,H,W] → one-hot
-            y_list      = [post_label(y.unsqueeze(0)) for y in masks]   # [1,H,W] → one-hot
+            # ✅ 修复维度对齐问题
+            y_pred_list = [post_pred(o.unsqueeze(0)) for o in outputs]  # [2,H,W] → [1,2,H,W]
+            y_list      = [post_label(y) for y in masks]                # [1,H,W] → [1,2,H,W]
 
             dice_metric(y_pred=y_pred_list, y=y_list)
             precision_metric(y_pred=y_pred_list, y=y_list)
