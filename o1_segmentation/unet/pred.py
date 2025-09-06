@@ -13,6 +13,7 @@ from monai.transforms import (
 )
 from monai.data import Dataset, DataLoader, list_data_collate
 
+
 def build_model(device):
     model = UNet(
         spatial_dims=3,
@@ -24,6 +25,7 @@ def build_model(device):
     ).to(device)
     return model
 
+
 def load_weights(model, ckpt_path, device):
     ckpt = torch.load(ckpt_path, map_location=device)
     if isinstance(ckpt, dict) and "model" in ckpt:
@@ -32,6 +34,7 @@ def load_weights(model, ckpt_path, device):
     else:
         model.load_state_dict(ckpt)
         print(f"[INFO] Loaded state_dict from {ckpt_path}")
+
 
 def get_infer_loader(image_path, label_path=None):
     data = {"image": image_path}
@@ -50,22 +53,25 @@ def get_infer_loader(image_path, label_path=None):
     loader = DataLoader(ds, batch_size=1, shuffle=False, num_workers=0, collate_fn=list_data_collate)
     return loader
 
+
 def save_nifti_simple(pred_tensor, out_path):
     """
-    pred_tensor: torch.Tensor [1,2,D,H,W] (one-hot or logits argmax→one-hot)
+    pred_tensor: torch.Tensor [1,2,D,H,W] one-hot
     """
-    if pred_tensor.shape[1] == 2:  # one-hot 或 logits
-        pred_np = pred_tensor.argmax(dim=1).squeeze(0).cpu().numpy().astype(np.uint8)  # [D,H,W]
-    else:
-        pred_np = pred_tensor.squeeze().cpu().numpy().astype(np.uint8)
-
+    pred_np = pred_tensor.argmax(dim=1).squeeze(0).cpu().numpy().astype(np.uint8)  # [D,H,W]
     affine = np.eye(4)  # 简单用单位矩阵
     nib.save(nib.Nifti1Image(pred_np, affine), out_path)
     print(f"[INFO] Saved prediction NIfTI to: {out_path}")
 
+
 def visualize_mid_slices(image_np, pred_np, gt_np, out_png):
+    """
+    image_np: [1,D,H,W]
+    pred_np:  [2,D,H,W]
+    gt_np:    [2,D,H,W] or None
+    """
     img = image_np[0]       # [D,H,W]
-    pred_fg = pred_np[1]    # [D,H,W]
+    pred_fg = pred_np[1]    # 前景通道
 
     mid = img.shape[0] // 2
     img_slice = img[mid]
@@ -73,12 +79,13 @@ def visualize_mid_slices(image_np, pred_np, gt_np, out_png):
 
     ncols = 3 if gt_np is not None else 2
     plt.figure(figsize=(4 * ncols, 4))
+
     plt.subplot(1, ncols, 1)
     plt.imshow(img_slice, cmap="gray")
     plt.title("Image (mid)"); plt.axis("off")
 
     if gt_np is not None:
-        gt_fg = gt_np[1]
+        gt_fg = gt_np[1]  # 前景通道
         plt.subplot(1, ncols, 2)
         plt.imshow(gt_fg[mid], cmap="gray")
         plt.title("GT (mid)"); plt.axis("off")
@@ -94,6 +101,7 @@ def visualize_mid_slices(image_np, pred_np, gt_np, out_png):
     plt.tight_layout()
     plt.savefig(out_png, dpi=200)
     plt.close()
+
 
 def main():
     parser = argparse.ArgumentParser(description="3D UNet Inference & Visualization")
@@ -140,17 +148,18 @@ def main():
             out_nii = os.path.join(args.out_dir, f"{base}_pred.nii.gz")
             save_nifti_simple(pred_dict["pred"], out_nii)
 
-            img_np  = batch["image"].numpy()[0]
-            pred_np = pred_dict["pred"].numpy()[0]
+            img_np  = batch["image"].numpy()[0]         # [1,D,H,W]
+            pred_np = pred_dict["pred"].numpy()[0]      # [2,D,H,W]
             gt_np   = None
             if args.label and "label" in batch:
-                from monai.transforms import AsDiscrete
-                gt_onehot = AsDiscrete(to_onehot=2)(batch["label"])
-                gt_np = gt_onehot.numpy()[0]
+                lbl = batch["label"].numpy()[0]         # [1,D,H,W]
+                lbl = np.squeeze(lbl, axis=0)           # [D,H,W]
+                gt_np = np.stack([1 - lbl, lbl], axis=0).astype(np.uint8)  # [2,D,H,W]
 
             out_png = os.path.join(args.out_dir, f"{base}_viz.png")
             visualize_mid_slices(img_np, pred_np, gt_np, out_png)
             print(f"[INFO] Saved visualization to: {out_png}")
+
 
 if __name__ == "__main__":
     main()
