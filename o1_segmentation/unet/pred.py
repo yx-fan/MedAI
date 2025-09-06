@@ -42,9 +42,8 @@ def get_infer_loader(image_path, label_path=None):
     transforms = Compose([
         LoadImaged(keys=keys),
         EnsureChannelFirstd(keys=keys),
-        # （与训练一致的强度归一化）
         ScaleIntensityRanged(keys=["image"], a_min=-100, a_max=94, b_min=0.0, b_max=1.0, clip=True),
-        EnsureTyped(keys=keys),
+        EnsureTyped(keys=keys, track_meta=True),  # ✅ 保留 meta 信息
     ])
     ds = Dataset([data], transform=transforms)
     loader = DataLoader(ds, batch_size=1, shuffle=False, num_workers=0, collate_fn=list_data_collate)
@@ -57,18 +56,13 @@ def save_nifti(pred_dict, out_dir):
         meta_keys=["image_meta_dict"],
         output_dir=out_dir,
         output_postfix="pred",
-        resample=False,  # 保持与原图同空间
+        resample=False,
         separate_folder=False
     )
     saver(pred_dict)
     return pred_dict["pred_meta_dict"]["filename_or_obj"]
 
 def visualize_mid_slices(image_np, pred_np, gt_np, out_png):
-    """
-    image_np: [1, D, H, W]  (after EnsureChannelFirstd)
-    pred_np:  [2, D, H, W]  (one-hot or logits argmax→one-hot)
-    gt_np:    [2, D, H, W] or None
-    """
     img = image_np[0]       # [D, H, W]
     pred_fg = pred_np[1]    # [D, H, W]
 
@@ -93,7 +87,7 @@ def visualize_mid_slices(image_np, pred_np, gt_np, out_png):
 
     plt.subplot(1, ncols, ax_idx)
     plt.imshow(img_slice, cmap="gray")
-    plt.imshow(pred_slice, alpha=0.4)  # 叠加预测
+    plt.imshow(pred_slice, alpha=0.4)
     plt.title("Pred (overlay, mid)"); plt.axis("off")
 
     plt.tight_layout()
@@ -114,26 +108,21 @@ def main():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"[INFO] Inference on {device}")
 
-    # Model
     model = build_model(device)
     load_weights(model, args.model, device)
     model.eval()
 
-    # Data
     loader = get_infer_loader(args.image, args.label)
-
-    # ROI
     roi_size = tuple(int(x) for x in args.roi.split(","))
 
-    # Post transforms（argmax 到 one-hot，便于可视化/保存）
     post_proc = Compose([
         AsDiscreted(keys=["pred"], argmax=True, to_onehot=2),
     ])
 
     with torch.no_grad():
         for batch in loader:
-            images = batch["image"].to(device)                # [1, 1, D, H, W]
-            meta = batch["image_meta_dict"]
+            images = batch["image"].to(device)
+            meta = batch.get("image_meta_dict", {})  # ✅ 没有 meta 时返回空字典
 
             logits = sliding_window_inference(
                 images,
@@ -141,30 +130,27 @@ def main():
                 sw_batch_size=args.sw_batch_size,
                 predictor=model,
                 overlap=args.overlap
-            )                                                  # [1, 2, D, H, W]
+            )
 
             pred_dict = {
-                "image": batch["image"],              # for meta & saving reference
+                "image": batch["image"],
                 "image_meta_dict": meta,
-                "pred": logits.cpu(),                 # keep on CPU for post + save
+                "pred": logits.cpu(),
             }
 
-            pred_dict = post_proc(pred_dict)          # argmax→one-hot: [1,2,D,H,W]
+            pred_dict = post_proc(pred_dict)
 
-            # Save NIfTI
             os.makedirs(args.out_dir, exist_ok=True)
             saved_path = save_nifti(pred_dict, args.out_dir)
             print(f"[INFO] Saved prediction NIfTI to: {saved_path}")
 
-            # Visualization PNG
-            img_np  = pred_dict["image"].numpy()[0]        # [1,D,H,W]
-            pred_np = pred_dict["pred"].numpy()[0]         # [2,D,H,W]
+            img_np  = pred_dict["image"].numpy()[0]
+            pred_np = pred_dict["pred"].numpy()[0]
             gt_np   = None
             if args.label and "label" in batch:
-                # 将 label 也转为 one-hot 以统一可视化
                 from monai.transforms import AsDiscrete
                 gt_onehot = AsDiscrete(to_onehot=2)(batch["label"])
-                gt_np = gt_onehot.numpy()[0]               # [2,D,H,W]
+                gt_np = gt_onehot.numpy()[0]
 
             base = os.path.splitext(os.path.basename(args.image))[0].replace(".nii", "")
             out_png = os.path.join(args.out_dir, f"{base}_viz.png")
