@@ -146,9 +146,9 @@ for epoch in trange(start_epoch, num_epochs, desc="Total Progress"):
                 loss = loss_fn(outputs, masks)
             val_loss += loss.item()
 
-            # ---- 修复 decollate_batch 报错，改成手动拆 batch ----
-            y_pred_list = [post_pred(o.unsqueeze(0)) for o in outputs]  # 遍历 batch
-            y_list      = [post_label(y.unsqueeze(0)) for y in masks]   # 遍历 batch
+            # ---- 修复 shape 不一致 ----
+            y_pred_list = [post_pred(o.unsqueeze(0)) for o in outputs]  # o: [2,H,W] → [1,2,H,W]
+            y_list      = [post_label(y) for y in masks]                # y: [H,W] → onehot [1,2,H,W]
 
             dice_metric(y_pred=y_pred_list, y=y_list)
             precision_metric(y_pred=y_pred_list, y=y_list)
