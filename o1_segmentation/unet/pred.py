@@ -9,7 +9,7 @@ from monai.networks.nets import UNet
 from monai.inferers import sliding_window_inference
 from monai.transforms import (
     Compose, LoadImaged, EnsureChannelFirstd, ScaleIntensityRanged,
-    EnsureTyped, AsDiscreted
+    EnsureTyped
 )
 from monai.data import Dataset, DataLoader, list_data_collate
 
@@ -56,9 +56,9 @@ def get_infer_loader(image_path, label_path=None):
 
 def save_nifti_simple(pred_tensor, out_path):
     """
-    pred_tensor: torch.Tensor [1,2,D,H,W] one-hot
+    pred_tensor: torch.Tensor [1,D,H,W] after argmax
     """
-    pred_np = pred_tensor.argmax(dim=1).squeeze(0).cpu().numpy().astype(np.uint8)  # [D,H,W]
+    pred_np = pred_tensor.squeeze(0).cpu().numpy().astype(np.uint8)  # [D,H,W]
     affine = np.eye(4)  # 简单用单位矩阵
     nib.save(nib.Nifti1Image(pred_np, affine), out_path)
     print(f"[INFO] Saved prediction NIfTI to: {out_path}")
@@ -67,7 +67,7 @@ def save_nifti_simple(pred_tensor, out_path):
 def visualize_mid_slices(image_np, pred_np, gt_np, out_png):
     """
     image_np: [1,D,H,W]
-    pred_np:  [2,D,H,W]
+    pred_np:  [2,D,H,W] one-hot for visualization
     gt_np:    [2,D,H,W] or None
     """
     img = image_np[0]       # [D,H,W]
@@ -85,7 +85,7 @@ def visualize_mid_slices(image_np, pred_np, gt_np, out_png):
     plt.title("Image (mid)"); plt.axis("off")
 
     if gt_np is not None:
-        gt_fg = gt_np[1]  # 前景通道
+        gt_fg = gt_np[1]
         plt.subplot(1, ncols, 2)
         plt.imshow(gt_fg[mid], cmap="gray")
         plt.title("GT (mid)"); plt.axis("off")
@@ -124,10 +124,6 @@ def main():
     loader = get_infer_loader(args.image, args.label)
     roi_size = tuple(int(x) for x in args.roi.split(","))
 
-    post_proc = Compose([
-        AsDiscreted(keys=["pred"], argmax=True, to_onehot=2),
-    ])
-
     with torch.no_grad():
         for batch in loader:
             images = batch["image"].to(device)
@@ -140,21 +136,23 @@ def main():
                 overlap=args.overlap
             )
 
-            pred_dict = {"pred": logits.cpu()}
-            pred_dict = post_proc(pred_dict)
+            # argmax -> 单通道预测 [1,D,H,W]
+            pred = torch.argmax(logits, dim=1, keepdim=True).cpu()
 
             os.makedirs(args.out_dir, exist_ok=True)
             base = os.path.splitext(os.path.basename(args.image))[0].replace(".nii", "")
             out_nii = os.path.join(args.out_dir, f"{base}_pred.nii.gz")
-            save_nifti_simple(pred_dict["pred"], out_nii)
+            save_nifti_simple(pred, out_nii)
 
-            img_np  = batch["image"].numpy()[0]         # [1,D,H,W]
-            pred_np = pred_dict["pred"].numpy()[0]      # [2,D,H,W]
-            gt_np   = None
+            # --- 可视化 ---
+            img_np = batch["image"].numpy()[0]  # [1,D,H,W]
+            # 构造 one-hot 方便叠加
+            pred_np = np.stack([1 - pred.numpy()[0, 0], pred.numpy()[0, 0]], axis=0).astype(np.uint8)
+            gt_np = None
             if args.label and "label" in batch:
-                lbl = batch["label"].numpy()[0]         # [1,D,H,W]
-                lbl = np.squeeze(lbl, axis=0)           # [D,H,W]
-                gt_np = np.stack([1 - lbl, lbl], axis=0).astype(np.uint8)  # [2,D,H,W]
+                lbl = batch["label"].numpy()[0]  # [1,D,H,W]
+                lbl = np.squeeze(lbl, axis=0)    # [D,H,W]
+                gt_np = np.stack([1 - lbl, lbl], axis=0).astype(np.uint8)
 
             out_png = os.path.join(args.out_dir, f"{base}_viz.png")
             visualize_mid_slices(img_np, pred_np, gt_np, out_png)
