@@ -145,8 +145,8 @@ for epoch in trange(start_epoch, num_epochs, desc="Total Progress"):
             val_loss += loss.item()
 
             # ---- 修复 y_pred / y 形状不一致 ----
-            y_pred_list = [post_pred(o) for o in outputs]  # outputs: [B,2,H,W]
-            y_list      = [post_label(y) for y in masks]   # masks:   [B,H,W]
+            y_pred_list = [post_pred(o.unsqueeze(0)) for o in torch.unbind(outputs, dim=0)]
+            y_list      = [post_label(y.unsqueeze(0)) for y in torch.unbind(masks, dim=0)]
 
             dice_metric(y_pred=y_pred_list, y=y_list)
             precision_metric(y_pred=y_pred_list, y=y_list)
