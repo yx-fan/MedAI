@@ -136,23 +136,24 @@ for epoch in trange(start_epoch, num_epochs, desc="Total Progress"):
 
     with torch.no_grad():
         for batch in tqdm(val_loader, desc="Validation", leave=False):
-            images = batch["image"].to(device)
+            images = batch["image"].to(device)             # [B,1,H,W]
             masks  = batch["label"].unsqueeze(1).to(device).long()  # [B,1,H,W]
 
             with torch.amp.autocast("cuda", enabled=(device.type == "cuda")):
-                outputs = model(images)["out"]
+                outputs = model(images)["out"]   # [B,2,H,W]
                 loss = loss_fn(outputs, masks)
             val_loss += loss.item()
 
-            # ✅ 修复维度对齐问题
-            y_pred_list = [post_pred(o.unsqueeze(0)) for o in outputs]  # [2,H,W] → [1,2,H,W]
-            y_list      = [post_label(y) for y in masks]                # [1,H,W] → [1,2,H,W]
+            # ---- 修复维度不一致 ----
+            y_pred_list = [post_pred(o.unsqueeze(0)) for o in outputs]   # [1,2,H,W]
+            y_list      = [post_label(y) for y in masks]                 # [1,2,H,W]
 
             dice_metric(y_pred=y_pred_list, y=y_list)
             precision_metric(y_pred=y_pred_list, y=y_list)
             recall_metric(y_pred=y_pred_list, y=y_list)
             specificity_metric(y_pred=y_pred_list, y=y_list)
 
+            # 计算 mIoU
             for p, t in zip(y_pred_list, y_list):
                 pred_bin = p[:,1].flatten().int()
                 true_bin = t[:,1].flatten().int()
