@@ -134,7 +134,7 @@ loss_dicece = DiceCELoss(
     include_background=False,
     to_onehot_y=True, softmax=True,
     lambda_dice=0.7, lambda_ce=0.3,
-    ce_weight=ce_weight
+    weight=ce_weight
 )
 loss_ftv = FocalTverskyLossCompat(
     include_background=False,
