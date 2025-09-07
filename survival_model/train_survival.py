@@ -159,7 +159,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--meta_csv", default="data/processed/train_2_5d/meta.csv", type=str)
     parser.add_argument("--clinical_csv", default="data/processed/clinical_processed.csv", type=str)
-    parser.add_argument("--processed_dir", default="data/processed", type=str)
+    parser.add_argument("--processed_dir", default="data/processed/train_2_5d/", type=str)
     parser.add_argument("--out_dir", default="runs/survival", type=str)
     parser.add_argument("--epochs", default=50, type=int)
     parser.add_argument("--batch_size", default=8, type=int)
