@@ -196,6 +196,7 @@ cython_debug/
 # data
 /data/raw/images/*
 /data/raw/masks/*
+/data/raw/clinical.csv
 /data/processed/*
 /data/features/*
 /data/nnunet/nnUNet_preprocessed/Dataset201_MyTask/*
