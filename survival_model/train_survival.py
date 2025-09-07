@@ -6,8 +6,8 @@ import torch.nn as nn
 from torch.utils.data import DataLoader, Subset
 from tqdm import tqdm
 from sklearn.model_selection import train_test_split
+import pandas as pd
 
-# 你之前的 Dataset（确保能 import 到）
 from dataset import SurvivalDataset
 from models import ImageEncoder2_5D, ClinicalMLP, MultiModalCox, cox_ph_loss
 
@@ -64,7 +64,7 @@ def run(args):
         agg="mean"
     )
 
-    # 如果 val 为空，则从 train 中拆分
+    # If val set is empty, auto-split train into train/val
     if len(val_ds) == 0:
         indices = list(range(len(full_train_ds)))
         train_idx, val_idx = train_test_split(indices, test_size=0.2, random_state=42)
@@ -83,7 +83,8 @@ def run(args):
         print(f"[DEBUG] Using subset: {len(train_ds)} train, {len(val_ds)} val, {args.epochs} epochs")
 
     # Infer N for image encoder
-    sample_img, sample_clin, _, _ = train_ds[0]
+    sample = train_ds[0]
+    sample_img, sample_clin = sample[0], sample[1]
     N = sample_img.shape[1]
     clin_dim = sample_clin.numel()
 
@@ -109,7 +110,13 @@ def run(args):
 
         # -------- Training --------
         pbar = tqdm(train_loader, desc=f"Epoch {epoch} Training", leave=False)
-        for step, (images, clinical, time, event) in enumerate(pbar):
+        for step, batch in enumerate(pbar):
+            if len(batch) == 5:
+                images, clinical, time, event, pid = batch
+            else:
+                images, clinical, time, event = batch
+                pid = None
+
             images = images.to(device)
             clinical = clinical.to(device)
             time = time.to(device).float()
@@ -135,9 +142,15 @@ def run(args):
 
         # -------- Validation --------
         img_encoder.eval(); clin_mlp.eval(); fusion.eval()
-        val_losses, risks, times, events = [], [], [], []
+        val_losses, risks, times, events, pids = [], [], [], [], []  # NEW: pids
         with torch.no_grad():
-            for images, clinical, time, event in tqdm(val_loader, desc=f"Epoch {epoch} Validation", leave=False):
+            for batch in tqdm(val_loader, desc=f"Epoch {epoch} Validation", leave=False):
+                if len(batch) == 5:
+                    images, clinical, time, event, pid = batch  # NEW
+                else:
+                    images, clinical, time, event = batch
+                    pid = None
+
                 images = images.to(device)
                 clinical = clinical.to(device)
                 time = time.to(device).float()
@@ -152,12 +165,32 @@ def run(args):
                 risks.append(risk.detach().cpu())
                 times.append(time.detach().cpu())
                 events.append(event.detach().cpu())
+                if pid is not None:
+                    pids.extend([str(x) for x in pid])
 
         val_loss = float(np.mean(val_losses)) if val_losses else float("nan")
         risks = torch.cat(risks) if risks else torch.tensor([])
         times = torch.cat(times) if times else torch.tensor([])
         events = torch.cat(events) if events else torch.tensor([])
         val_c = c_index(risks, times, events) if len(risks) else float("nan")
+
+        if len(risks) > 0:
+            out_path = os.path.join(args.out_dir, f"val_risks_epoch{epoch:03d}.csv")
+            if pids and len(pids) == len(risks):
+                df_risk = pd.DataFrame({
+                    "patient_id": pids,
+                    "risk": risks.numpy(),
+                    "time": times.numpy(),
+                    "event": events.numpy()
+                })
+            else:
+                df_risk = pd.DataFrame({
+                    "risk": risks.numpy(),
+                    "time": times.numpy(),
+                    "event": events.numpy()
+                })
+            df_risk.to_csv(out_path, index=False)
+            print(f"[INFO] Saved validation risks to {out_path}")
 
         scheduler.step()
 

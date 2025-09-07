@@ -79,4 +79,5 @@ class SurvivalDataset(Dataset):
         time = torch.tensor(group.iloc[0]["time"], dtype=torch.float32)
         event = torch.tensor(group.iloc[0]["event"], dtype=torch.float32)
 
-        return image_tensor, clinical_tensor, time, event
+        # Return (image, clinical, time, event, patient_id)
+        return image_tensor, clinical_tensor, time, event, str(patient_id)
