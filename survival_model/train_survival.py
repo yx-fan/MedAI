@@ -3,7 +3,7 @@ import argparse
 import numpy as np
 import torch
 import torch.nn as nn
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, Subset
 from tqdm import tqdm
 
 # 你之前的 Dataset（确保能 import 到）
@@ -14,10 +14,6 @@ from models import ImageEncoder2_5D, ClinicalMLP, MultiModalCox, cox_ph_loss
 # C-index (Harrell's C)
 # -----------------------------
 def c_index(risk: torch.Tensor, time: torch.Tensor, event: torch.Tensor) -> float:
-    """
-    risk: higher means higher risk (shorter survival)
-    Only comparable pairs where min(time_i, time_j) has event=1 contribute.
-    """
     r = risk.detach().cpu().numpy()
     t = time.detach().cpu().numpy()
     e = event.detach().cpu().numpy().astype(bool)
@@ -43,6 +39,7 @@ def c_index(risk: torch.Tensor, time: torch.Tensor, event: torch.Tensor) -> floa
         return float("nan")
     return (n_conc + 0.5 * n_tied) / n_total
 
+
 # -----------------------------
 # Train / Val loop
 # -----------------------------
@@ -66,13 +63,21 @@ def run(args):
         agg="mean"
     )
 
+    # Debug mode: only take a small subset
+    if args.debug:
+        train_ds = Subset(train_ds, list(range(min(50, len(train_ds)))))
+        val_ds = Subset(val_ds, list(range(min(20, len(val_ds)))))
+        args.epochs = 3
+        args.batch_size = 2
+        print(f"[DEBUG] Using subset: {len(train_ds)} train, {len(val_ds)} val, {args.epochs} epochs")
+
     # Infer N for image encoder
     sample_img, sample_clin, _, _ = train_ds[0]
     N = sample_img.shape[1]
     clin_dim = sample_clin.numel()
 
-    train_loader = DataLoader(train_ds, batch_size=args.batch_size, shuffle=True, num_workers=4, pin_memory=True)
-    val_loader = DataLoader(val_ds, batch_size=args.batch_size, shuffle=False, num_workers=2)
+    train_loader = DataLoader(train_ds, batch_size=args.batch_size, shuffle=True, num_workers=2, pin_memory=True)
+    val_loader = DataLoader(val_ds, batch_size=args.batch_size, shuffle=False, num_workers=1)
 
     # Models
     img_encoder = ImageEncoder2_5D(in_slices=N, out_dim=args.img_embed_dim).to(device)
@@ -146,6 +151,8 @@ def run(args):
         scheduler.step()
 
         print(f"[Epoch {epoch:03d}] TrainLoss={tr_loss:.4f} | ValLoss={val_loss:.4f} | Val C-index={val_c:.4f}")
+        print(f"[DEBUG] Val samples={len(events)}, Events sum={events.sum().item() if len(events)>0 else 0}, "
+              f"Time range=({times.min().item() if len(times)>0 else 'NA'} , {times.max().item() if len(times)>0 else 'NA'})")
 
         if not np.isnan(val_c) and val_c > best_val_c:
             best_val_c = val_c
@@ -160,6 +167,7 @@ def run(args):
 
     print(f"[DONE] Best Val C-index: {best_val_c:.4f}")
 
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--meta_csv", default="data/processed/train_2_5d/meta.csv", type=str)
@@ -171,5 +179,6 @@ if __name__ == "__main__":
     parser.add_argument("--lr", default=1e-3, type=float)
     parser.add_argument("--img_embed_dim", default=256, type=int)
     parser.add_argument("--clin_embed_dim", default=128, type=int)
+    parser.add_argument("--debug", action="store_true", help="Run in debug mode with fewer samples/epochs")
     args = parser.parse_args()
     run(args)
