@@ -293,7 +293,7 @@ for epoch in trange(start_epoch, num_epochs, desc="Total Progress"):
     specificity_metric.reset()
 
     ious = []
-    with torch.no_grad():
+    with torch.inference_mode(), torch.amp.autocast("cuda", enabled=(device.type == "cuda")):
         for step, batch in enumerate(tqdm(val_loader, desc="Validation", leave=False)):
             images = batch["image"].to(device)
             masks  = batch["label"].to(device).long()
@@ -302,7 +302,7 @@ for epoch in trange(start_epoch, num_epochs, desc="Total Progress"):
                 outputs = sliding_window_inference(
                     images,
                     roi_size=(64, 64, 32) if args.debug else (128, 128, 64),
-                    sw_batch_size=1 if args.debug else 2,
+                    sw_batch_size=1 if args.debug else 4,
                     predictor=model,
                     overlap=0.5,          # --- Modified: increased overlap
                     mode="gaussian"       # --- Modified: gaussian blending
