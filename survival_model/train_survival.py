@@ -5,6 +5,7 @@ import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader, Subset
 from tqdm import tqdm
+from sklearn.model_selection import train_test_split
 
 # 你之前的 Dataset（确保能 import 到）
 from dataset import SurvivalDataset
@@ -48,7 +49,7 @@ def run(args):
     torch.backends.cudnn.benchmark = True
 
     # Datasets
-    train_ds = SurvivalDataset(
+    full_train_ds = SurvivalDataset(
         meta_csv=args.meta_csv,
         clinical_csv=args.clinical_csv,
         processed_dir=args.processed_dir,
@@ -62,6 +63,16 @@ def run(args):
         split="val",
         agg="mean"
     )
+
+    # 如果 val 为空，则从 train 中拆分
+    if len(val_ds) == 0:
+        indices = list(range(len(full_train_ds)))
+        train_idx, val_idx = train_test_split(indices, test_size=0.2, random_state=42)
+        train_ds = torch.utils.data.Subset(full_train_ds, train_idx)
+        val_ds   = torch.utils.data.Subset(full_train_ds, val_idx)
+        print(f"[INFO] Auto-split train into {len(train_ds)} train / {len(val_ds)} val")
+    else:
+        train_ds = full_train_ds
 
     # Debug mode: only take a small subset
     if args.debug:
