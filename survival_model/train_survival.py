@@ -4,6 +4,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
+from tqdm import tqdm
 
 # 你之前的 Dataset（确保能 import 到）
 from dataset import SurvivalDataset
@@ -22,12 +23,10 @@ def c_index(risk: torch.Tensor, time: torch.Tensor, event: torch.Tensor) -> floa
     e = event.detach().cpu().numpy().astype(bool)
 
     n_conc, n_tied, n_total = 0, 0, 0
-    # O(N^2) baseline; for moderate N fine. For large N consider optimized versions.
     for i in range(len(r)):
         for j in range(len(r)):
             if t[i] == t[j]:
                 continue
-            # pair is comparable if the shorter time had an event
             if t[i] < t[j] and e[i]:
                 n_total += 1
                 if r[i] > r[j]:
@@ -57,7 +56,7 @@ def run(args):
         clinical_csv=args.clinical_csv,
         processed_dir=args.processed_dir,
         split="train",
-        agg="mean"   # you can switch to "max"
+        agg="mean"
     )
     val_ds = SurvivalDataset(
         meta_csv=args.meta_csv,
@@ -67,9 +66,8 @@ def run(args):
         agg="mean"
     )
 
-    # Infer N for image encoder from one sample
+    # Infer N for image encoder
     sample_img, sample_clin, _, _ = train_ds[0]
-    # sample_img: (2, N, H, W)
     N = sample_img.shape[1]
     clin_dim = sample_clin.numel()
 
@@ -89,16 +87,20 @@ def run(args):
     os.makedirs(args.out_dir, exist_ok=True)
 
     for epoch in range(1, args.epochs + 1):
+        print(f"\n[INFO] ===== Epoch {epoch}/{args.epochs} =====")
         img_encoder.train(); clin_mlp.train(); fusion.train()
         tr_loss = 0.0
-        for images, clinical, time, event in train_loader:
-            images = images.to(device)           # (B, 2, N, H, W)
-            clinical = clinical.to(device)       # (B, F)
+
+        # -------- Training --------
+        pbar = tqdm(train_loader, desc=f"Epoch {epoch} Training", leave=False)
+        for step, (images, clinical, time, event) in enumerate(pbar):
+            images = images.to(device)
+            clinical = clinical.to(device)
             time = time.to(device).float()
             event = event.to(device).float()
 
             optimizer.zero_grad(set_to_none=True)
-            with torch.cuda.amp.autocast(enabled=(device.type == "cuda")):
+            with torch.amp.autocast("cuda", enabled=(device.type == "cuda")):
                 z_img = img_encoder(images)
                 z_clin = clin_mlp(clinical)
                 risk = fusion(z_img, z_clin)
@@ -109,13 +111,17 @@ def run(args):
             optimizer.step()
             tr_loss += loss.item()
 
-        tr_loss /= max(1, len(train_loader))
+            if step % 10 == 0:
+                pbar.set_postfix({"batch_loss": f"{loss.item():.4f}"})
 
-        # Validation
+        tr_loss /= max(1, len(train_loader))
+        print(f"[INFO] Train Loss={tr_loss:.4f}")
+
+        # -------- Validation --------
         img_encoder.eval(); clin_mlp.eval(); fusion.eval()
         val_losses, risks, times, events = [], [], [], []
         with torch.no_grad():
-            for images, clinical, time, event in val_loader:
+            for images, clinical, time, event in tqdm(val_loader, desc=f"Epoch {epoch} Validation", leave=False):
                 images = images.to(device)
                 clinical = clinical.to(device)
                 time = time.to(device).float()
@@ -141,7 +147,6 @@ def run(args):
 
         print(f"[Epoch {epoch:03d}] TrainLoss={tr_loss:.4f} | ValLoss={val_loss:.4f} | Val C-index={val_c:.4f}")
 
-        # Save best
         if not np.isnan(val_c) and val_c > best_val_c:
             best_val_c = val_c
             torch.save({
