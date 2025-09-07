@@ -157,7 +157,7 @@ def run(args):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--meta_csv", default="data/processed/meta.csv", type=str)
+    parser.add_argument("--meta_csv", default="data/processed/train_2_5d/meta.csv", type=str)
     parser.add_argument("--clinical_csv", default="data/processed/clinical_processed.csv", type=str)
     parser.add_argument("--processed_dir", default="data/processed", type=str)
     parser.add_argument("--out_dir", default="runs/survival", type=str)
