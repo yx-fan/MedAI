@@ -5,7 +5,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import nibabel as nib
 
-from monai.networks.nets import UNet
+from monai.networks.nets import AttentionUnet
 from monai.inferers import sliding_window_inference
 from monai.transforms import (
     Compose, LoadImaged, EnsureChannelFirstd, ScaleIntensityRanged,
@@ -18,13 +18,12 @@ from monai.data import Dataset, DataLoader, list_data_collate
 # Model
 # =============================
 def build_model(device):
-    model = UNet(
+    model = AttentionUnet(
         spatial_dims=3,
         in_channels=1,
         out_channels=2,
         channels=(16, 32, 64, 128, 256),
         strides=(2, 2, 2, 2),
-        num_res_units=2,
     ).to(device)
     return model
 
@@ -129,8 +128,8 @@ def compute_dice(pred_np, gt_np):
 # Main
 # =============================
 def main():
-    parser = argparse.ArgumentParser(description="3D UNet Batch Inference & Per-Case Dice")
-    parser.add_argument("--model", required=True, help="Path to UNet .pth checkpoint")
+    parser = argparse.ArgumentParser(description="3D Attention UNet Batch Inference & Per-Case Dice")
+    parser.add_argument("--model", required=True, help="Path to Attention UNet .pth checkpoint")
     parser.add_argument("--image_dir", required=True, help="Directory of images (.nii.gz)")
     parser.add_argument("--label_dir", default=None, help="Directory of labels (.nii.gz)")
     parser.add_argument("--out_dir", default="./pred_out", help="Output directory")
