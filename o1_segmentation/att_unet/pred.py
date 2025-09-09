@@ -4,6 +4,7 @@ import torch
 import numpy as np
 import matplotlib.pyplot as plt
 import nibabel as nib
+import csv
 
 from monai.networks.nets import AttentionUnet
 from monai.inferers import sliding_window_inference
@@ -128,6 +129,7 @@ def compute_dice(pred_np, gt_np):
 # =============================
 # Main
 # =============================
+
 def main():
     parser = argparse.ArgumentParser(description="3D Attention UNet Batch Inference & Per-Case Dice")
     parser.add_argument("--model", required=True, help="Path to Attention UNet .pth checkpoint")
@@ -150,6 +152,7 @@ def main():
     roi_size = tuple(int(x) for x in args.roi.split(","))
 
     dice_scores = []
+    results = []   # ⬅️ 保存 per-case Dice
     os.makedirs(args.out_dir, exist_ok=True)
 
     with torch.no_grad():
@@ -183,6 +186,7 @@ def main():
                 # 计算 Dice
                 dice = compute_dice(pred_bin, lbl)
                 dice_scores.append(dice)
+                results.append((case_id, dice))   # ⬅️ 保存 case 和 dice
                 print(f"[RESULT] Dice for {case_id}: {dice:.4f}")
 
             out_png = os.path.join(args.out_dir, f"{case_id}_viz.png")
@@ -192,6 +196,15 @@ def main():
     if args.label_dir and dice_scores:
         mean_dice = np.mean(dice_scores)
         print(f"[RESULT] Mean Dice over dataset: {mean_dice:.4f}")
+
+        # ⬅️ 保存到 CSV
+        csv_path = os.path.join(args.out_dir, "dice_results.csv")
+        with open(csv_path, "w", newline="") as f:
+            writer = csv.writer(f)
+            writer.writerow(["CaseID", "Dice"])
+            writer.writerows(results)
+            writer.writerow(["Mean", mean_dice])
+        print(f"[INFO] Saved Dice results to {csv_path}")
 
 
 if __name__ == "__main__":
