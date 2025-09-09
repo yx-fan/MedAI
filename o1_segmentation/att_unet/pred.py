@@ -45,7 +45,8 @@ def get_infer_loader(image_dir, label_dir=None):
     image_files = sorted([os.path.join(image_dir, f) for f in os.listdir(image_dir) if f.endswith(".nii.gz")])
     data = []
     for img_path in image_files:
-        item = {"image": img_path}
+        case_id = os.path.splitext(os.path.basename(img_path))[0]
+        item = {"image": img_path, "case_id": case_id}
         if label_dir is not None:
             lbl_path = os.path.join(label_dir, os.path.basename(img_path))
             if os.path.isfile(lbl_path):
@@ -154,7 +155,7 @@ def main():
     with torch.no_grad():
         for batch in loader:
             images = batch["image"].to(device)
-            case_id = os.path.splitext(os.path.basename(batch["image_meta_dict"]["filename_or_obj"][0]))[0]
+            case_id = batch["case_id"][0] if "case_id" in batch else "unknown"
 
             logits = sliding_window_inference(
                 images,
