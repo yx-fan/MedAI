@@ -45,7 +45,7 @@ class ImageEncoder2_5D(nn.Module):
 # MLP for clinical features
 # -----------------------------
 class ClinicalMLP(nn.Module):
-    def __init__(self, in_dim: int, hidden: int = 128, out_dim: int = 128, dropout: float = 0.1):
+    def __init__(self, in_dim: int, hidden: int = 64, out_dim: int = 64, dropout: float = 0.3):
         super().__init__()
         self.net = nn.Sequential(
             nn.Linear(in_dim, hidden),
@@ -53,6 +53,7 @@ class ClinicalMLP(nn.Module):
             nn.Dropout(dropout),
             nn.Linear(hidden, out_dim),
             nn.ReLU(inplace=True),
+            nn.Dropout(dropout)
         )
 
     def forward(self, x):
@@ -63,12 +64,12 @@ class ClinicalMLP(nn.Module):
 # Fusion backbone
 # -----------------------------
 class MultiModalBackbone(nn.Module):
-    def __init__(self, img_embed_dim: int, clin_embed_dim: int, hidden: int = 128):
+    def __init__(self, img_embed_dim: int, clin_embed_dim: int, hidden: int = 64, dropout: float = 0.3):
         super().__init__()
         self.fuse = nn.Sequential(
             nn.Linear(img_embed_dim + clin_embed_dim, hidden),
             nn.ReLU(inplace=True),
-            nn.Dropout(0.1)
+            nn.Dropout(dropout)
         )
         self.hidden_dim = hidden
 
