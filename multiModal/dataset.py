@@ -21,7 +21,16 @@ class MultiModalDataset(Dataset):
         self.df = pd.merge(self.meta, self.clinical, on="patient_id", how="inner")
 
         # Clinical features
-        exclude_cols = ["patient_id", "time", "event", "ln_label"]
+        # exclude_cols = ["patient_id", "time", "event", "ln_label"]
+        exclude_cols = [
+            "patient_id", "time", "event", "ln_label",
+            # 🔥 防泄露：以下这些在训练时要去掉
+            "lymph_node_metastasis",
+            "number_of_metastatic_lymph_nodes_on_pathology",
+            "N", "N_1", "N_2",
+            "stage", "stage_standard", "stage_2", "stage_3", "stage_4",
+            "stage_standard_2", "stage_standard_3", "stage_standard_4"
+        ]
         if clinical_features is None:
             self.clinical_features = [c for c in self.clinical.columns if c not in exclude_cols]
         else:

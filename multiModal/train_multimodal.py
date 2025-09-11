@@ -234,3 +234,31 @@ if __name__ == "__main__":
     parser.add_argument("--debug", action="store_true", help="Run in debug mode with fewer samples/epochs")
     args = parser.parse_args()
     run(args)
+
+
+#sample usage:
+# python multiModal/train_multimodal.py \
+#     --meta_csv data/processed/train_2_5d/meta.csv \
+#     --clinical_csv data/processed/clinical_processed_multimodal.csv \
+#     --processed_dir data/processed/train_2_5d/ \
+#     --out_dir runs/ln_classification \
+#     --epochs 50 \
+#     --batch_size 8 \
+#     --lr 1e-3 \
+#     --img_embed_dim 256 \
+#     --clin_embed_dim 128 \
+#     --task ln_classification
+
+
+# Example usage:
+# python survival_model/train_multitask.py \
+#     --meta_csv data/processed/train_2_5d/meta.csv \
+#     --clinical_csv data/processed/clinical_processed_multimodal.csv \
+#     --processed_dir data/processed/train_2_5d/ \
+#     --out_dir runs/survival \
+#     --epochs 50 \
+#     --batch_size 8 \
+#     --lr 1e-3 \
+#     --img_embed_dim 256 \
+#     --clin_embed_dim 128 \
+#     --task survival
