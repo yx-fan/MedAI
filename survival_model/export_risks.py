@@ -13,7 +13,8 @@ import os
 import argparse
 import torch
 import pandas as pd
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, Subset
+from sklearn.model_selection import train_test_split
 
 from dataset import SurvivalDataset
 from models import ImageEncoder2_5D, ClinicalMLP, MultiModalCox
@@ -62,7 +63,7 @@ def main(args):
 
     # Load datasets
     print("[INFO] Loading datasets ...")
-    train_ds = SurvivalDataset(
+    full_train_ds = SurvivalDataset(
         meta_csv=args.meta_csv,
         clinical_csv=args.clinical_csv,
         processed_dir=args.processed_dir,
@@ -76,7 +77,18 @@ def main(args):
         split="val",
         agg="mean"
     )
-    print(f"[INFO] Train set: {len(train_ds)} samples | Val set: {len(val_ds)} samples")
+
+    # 如果 val 为空，自动切分
+    if len(val_ds) == 0:
+        indices = list(range(len(full_train_ds)))
+        train_idx, val_idx = train_test_split(indices, test_size=0.2, random_state=42)
+        train_ds = Subset(full_train_ds, train_idx)
+        val_ds = Subset(full_train_ds, val_idx)
+        print(f"[INFO] Auto-split train into {len(train_ds)} train / {len(val_ds)} val")
+    else:
+        train_ds = full_train_ds
+
+    print(f"[INFO] Final Train set: {len(train_ds)} samples | Val set: {len(val_ds)} samples")
 
     train_loader = DataLoader(train_ds, batch_size=8, shuffle=False)
     val_loader = DataLoader(val_ds, batch_size=8, shuffle=False)
@@ -125,3 +137,5 @@ if __name__ == "__main__":
     parser.add_argument("--clin_embed_dim", type=int, default=128)
     args = parser.parse_args()
     main(args)
+
+# Example usage: # python survival_model/export_risks.py \ # --ckpt_path runs/survival/best_mm_cox.pth \ # --meta_csv data/processed/train_2_5d/meta.csv \ # --clinical_csv data/processed/clinical_processed.csv \ # --processed_dir data/processed/train_2_5d/ \ # --out_dir runs/survival
