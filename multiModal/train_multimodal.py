@@ -11,6 +11,8 @@ from torch.utils.data import DataLoader, Subset
 from tqdm import tqdm
 from sklearn.model_selection import train_test_split
 import pandas as pd
+from sklearn.metrics import roc_auc_score, roc_curve
+import matplotlib.pyplot as plt
 
 from dataset import MultiModalDataset
 from models import ImageEncoder2_5D, ClinicalMLP, MultiModalNet, cox_ph_loss
@@ -84,7 +86,7 @@ def run(args):
         val_ds = Subset(val_ds, list(range(min(20, len(val_ds)))))
         args.epochs = 3
         args.batch_size = 2
-        print(f"[DEBUG] Using subset: {len(train_ds)} train, {len(val_ds)} val")
+        print(f"[DEBUG] Using subset: {len(train_ds)} train, {len(val_ds)} val, {args.epochs} epochs")
 
     # -----------------------------
     # Dataloaders
@@ -109,7 +111,7 @@ def run(args):
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.epochs, eta_min=1e-6)
 
     best_val_metric = -1.0
-    patience_counter = 0   # 🔥 新增
+    patience_counter = 0
     os.makedirs(args.out_dir, exist_ok=True)
 
     # -----------------------------
@@ -161,7 +163,7 @@ def run(args):
         # Validation
         # -----------------------------
         img_encoder.eval(); clin_mlp.eval(); model.eval()
-        val_losses, preds, targets = [], [], []
+        val_losses, preds, targets, probs = [], [], [], []
         risks, times, events = [], [], []
 
         with torch.no_grad():
@@ -185,6 +187,7 @@ def run(args):
                     val_losses.append(loss.item())
                     preds.extend(torch.argmax(logits, dim=1).cpu().numpy())
                     targets.extend(ln_label.cpu().numpy())
+                    probs.extend(F.softmax(logits, dim=1)[:,1].cpu().numpy())  # 🔥 概率分数
 
         val_loss = float(np.mean(val_losses)) if val_losses else float("nan")
 
@@ -198,15 +201,32 @@ def run(args):
 
         elif args.task == "ln_classification":
             acc = (np.array(preds) == np.array(targets)).mean() if preds else 0.0
-            metric = acc
-            print(f"[Epoch {epoch:03d}] TrainLoss={tr_loss:.4f} | ValLoss={val_loss:.4f} | Val Acc={acc:.4f}")
+            auc = roc_auc_score(targets, probs) if len(set(targets)) > 1 else float("nan")
+            metric = auc  # 🔥 用 AUC 做 early stop
+            print(f"[Epoch {epoch:03d}] TrainLoss={tr_loss:.4f} | "
+                  f"ValLoss={val_loss:.4f} | Val Acc={acc:.4f} | Val AUC={auc:.4f}")
+
+            if len(set(targets)) > 1:
+                fpr, tpr, _ = roc_curve(targets, probs)
+                plt.figure()
+                plt.plot(fpr, tpr, label=f"AUC={auc:.3f}")
+                plt.plot([0,1], [0,1], "k--")
+                plt.xlabel("False Positive Rate")
+                plt.ylabel("True Positive Rate")
+                plt.title(f"ROC Curve (Epoch {epoch})")
+                plt.legend(loc="lower right")
+                plt.tight_layout()
+                roc_path = os.path.join(args.out_dir, f"roc_epoch{epoch:03d}.png")
+                plt.savefig(roc_path, dpi=300)
+                plt.close()
+                print(f"[INFO] ROC curve saved to {roc_path}")
 
         scheduler.step()
 
         # save best + early stopping
         if not np.isnan(metric) and metric > best_val_metric:
             best_val_metric = metric
-            patience_counter = 0  # 🔥 reset patience
+            patience_counter = 0
             torch.save({
                 "epoch": epoch,
                 "img_encoder": img_encoder.state_dict(),
@@ -241,7 +261,7 @@ if __name__ == "__main__":
     parser.add_argument("--task", choices=["survival", "ln_classification"], required=True,
                         help="Which task to train: survival or ln_classification")
     parser.add_argument("--patience", default=10, type=int,
-                        help="Early stopping patience (epochs)")   # 🔥 新增
+                        help="Early stopping patience (epochs)")
     parser.add_argument("--debug", action="store_true", help="Run in debug mode with fewer samples/epochs")
     args = parser.parse_args()
     run(args)
