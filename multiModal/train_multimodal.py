@@ -109,6 +109,7 @@ def run(args):
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.epochs, eta_min=1e-6)
 
     best_val_metric = -1.0
+    patience_counter = 0   # 🔥 新增
     os.makedirs(args.out_dir, exist_ok=True)
 
     # -----------------------------
@@ -202,9 +203,10 @@ def run(args):
 
         scheduler.step()
 
-        # save best
+        # save best + early stopping
         if not np.isnan(metric) and metric > best_val_metric:
             best_val_metric = metric
+            patience_counter = 0  # 🔥 reset patience
             torch.save({
                 "epoch": epoch,
                 "img_encoder": img_encoder.state_dict(),
@@ -214,6 +216,13 @@ def run(args):
                 "task": args.task
             }, os.path.join(args.out_dir, f"best_multitask_{args.task}.pth"))
             print(f"[INFO] Saved best model ({args.task}, metric={metric:.4f})")
+        else:
+            patience_counter += 1
+            print(f"[INFO] No improvement. Patience {patience_counter}/{args.patience}")
+
+        if patience_counter >= args.patience:
+            print(f"[EARLY STOP] No improvement for {args.patience} epochs. Stopping training.")
+            break
 
     print(f"[DONE] Best Val metric ({args.task}): {best_val_metric:.4f}")
 
@@ -231,6 +240,8 @@ if __name__ == "__main__":
     parser.add_argument("--clin_embed_dim", default=128, type=int)
     parser.add_argument("--task", choices=["survival", "ln_classification"], required=True,
                         help="Which task to train: survival or ln_classification")
+    parser.add_argument("--patience", default=10, type=int,
+                        help="Early stopping patience (epochs)")   # 🔥 新增
     parser.add_argument("--debug", action="store_true", help="Run in debug mode with fewer samples/epochs")
     args = parser.parse_args()
     run(args)
