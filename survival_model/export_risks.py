@@ -2,11 +2,12 @@
 # -*- coding: utf-8 -*-
 
 """
-Export survival model risk scores for train/val sets.
+Export survival model risk scores for train/val/test sets.
 
 Output:
   - runs/survival/train_risks.csv
   - runs/survival/val_risks.csv
+  - runs/survival/test_risks.csv   (如果 test 存在)
 """
 
 import os
@@ -22,6 +23,10 @@ from models import ImageEncoder2_5D, ClinicalMLP, MultiModalCox
 
 @torch.no_grad()
 def export_risks(loader, img_encoder, clin_mlp, fusion, device, out_path, split_name):
+    if len(loader) == 0:
+        print(f"[WARN] No samples found in {split_name}, skipped.")
+        return
+
     print(f"[INFO] Exporting risks for {split_name} (batches={len(loader)}) ...")
     risks, times, events, pids = [], [], [], []
 
@@ -77,6 +82,13 @@ def main(args):
         split="val",
         agg="mean"
     )
+    test_ds = SurvivalDataset(
+        meta_csv=args.meta_csv,
+        clinical_csv=args.clinical_csv,
+        processed_dir=args.processed_dir,
+        split="test",
+        agg="mean"
+    )
 
     # 如果 val 为空，自动切分
     if len(val_ds) == 0:
@@ -88,10 +100,11 @@ def main(args):
     else:
         train_ds = full_train_ds
 
-    print(f"[INFO] Final Train set: {len(train_ds)} samples | Val set: {len(val_ds)} samples")
+    print(f"[INFO] Final Train set: {len(train_ds)} samples | Val set: {len(val_ds)} samples | Test set: {len(test_ds)} samples")
 
     train_loader = DataLoader(train_ds, batch_size=8, shuffle=False)
     val_loader = DataLoader(val_ds, batch_size=8, shuffle=False)
+    test_loader = DataLoader(test_ds, batch_size=8, shuffle=False) if len(test_ds) > 0 else []
 
     # Build models
     print("[INFO] Building model ...")
@@ -121,6 +134,9 @@ def main(args):
                  os.path.join(args.out_dir, "train_risks.csv"), "train")
     export_risks(val_loader, img_encoder, clin_mlp, fusion, device,
                  os.path.join(args.out_dir, "val_risks.csv"), "val")
+    if len(test_ds) > 0:
+        export_risks(test_loader, img_encoder, clin_mlp, fusion, device,
+                     os.path.join(args.out_dir, "test_risks.csv"), "test")
 
     print("[DONE] Export completed!")
 
@@ -138,4 +154,10 @@ if __name__ == "__main__":
     args = parser.parse_args()
     main(args)
 
-# Example usage: # python survival_model/export_risks.py \ # --ckpt_path runs/survival/best_mm_cox.pth \ # --meta_csv data/processed/train_2_5d/meta.csv \ # --clinical_csv data/processed/clinical_processed.csv \ # --processed_dir data/processed/train_2_5d/ \ # --out_dir runs/survival
+# Example usage:
+# python survival_model/export_risks.py \
+#     --ckpt_path runs/survival/best_mm_cox.pth \
+#     --meta_csv data/processed/train_2_5d/meta.csv \
+#     --clinical_csv data/processed/clinical_processed.csv \
+#     --processed_dir data/processed/train_2_5d/ \
+#     --out_dir runs/survival
