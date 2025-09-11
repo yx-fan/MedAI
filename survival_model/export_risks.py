@@ -20,9 +20,11 @@ from models import ImageEncoder2_5D, ClinicalMLP, MultiModalCox
 
 
 @torch.no_grad()
-def export_risks(loader, img_encoder, clin_mlp, fusion, device, out_path):
+def export_risks(loader, img_encoder, clin_mlp, fusion, device, out_path, split_name):
+    print(f"[INFO] Exporting risks for {split_name} (batches={len(loader)}) ...")
     risks, times, events, pids = [], [], [], []
-    for batch in loader:
+
+    for step, batch in enumerate(loader):
         if len(batch) == 5:
             images, clinical, time, event, pid = batch
         else:
@@ -41,6 +43,9 @@ def export_risks(loader, img_encoder, clin_mlp, fusion, device, out_path):
         events.extend(event.numpy().flatten().tolist())
         pids.extend([str(x) for x in pid])
 
+        if step % 10 == 0:
+            print(f"  [Batch {step}/{len(loader)}] processed")
+
     df = pd.DataFrame({
         "patient_id": pids,
         "risk": risks,
@@ -48,13 +53,15 @@ def export_risks(loader, img_encoder, clin_mlp, fusion, device, out_path):
         "event": events
     })
     df.to_csv(out_path, index=False)
-    print(f"[INFO] Saved risks to {out_path}")
+    print(f"[INFO] Saved {len(df)} records to {out_path}")
 
 
 def main(args):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    print(f"[INFO] Using device: {device}")
 
     # Load datasets
+    print("[INFO] Loading datasets ...")
     train_ds = SurvivalDataset(
         meta_csv=args.meta_csv,
         clinical_csv=args.clinical_csv,
@@ -69,33 +76,41 @@ def main(args):
         split="val",
         agg="mean"
     )
+    print(f"[INFO] Train set: {len(train_ds)} samples | Val set: {len(val_ds)} samples")
 
     train_loader = DataLoader(train_ds, batch_size=8, shuffle=False)
     val_loader = DataLoader(val_ds, batch_size=8, shuffle=False)
 
     # Build models
+    print("[INFO] Building model ...")
     sample = train_ds[0]
     img_slices, clin_features = sample[0], sample[1]
     N = img_slices.shape[1]
     clin_dim = clin_features.numel()
+    print(f"[INFO] Image slices per sample: {N}, Clinical feature dim: {clin_dim}")
 
     img_encoder = ImageEncoder2_5D(in_slices=N, out_dim=args.img_embed_dim).to(device)
     clin_mlp = ClinicalMLP(in_dim=clin_dim, hidden=128, out_dim=args.clin_embed_dim, dropout=0.1).to(device)
     fusion = MultiModalCox(img_embed_dim=args.img_embed_dim, clin_embed_dim=args.clin_embed_dim, hidden=128).to(device)
 
     # Load checkpoint
+    print(f"[INFO] Loading checkpoint: {args.ckpt_path}")
     ckpt = torch.load(args.ckpt_path, map_location=device)
     img_encoder.load_state_dict(ckpt["img_encoder"])
     clin_mlp.load_state_dict(ckpt["clin_mlp"])
     fusion.load_state_dict(ckpt["fusion"])
-    print(f"[INFO] Loaded checkpoint from {args.ckpt_path} (epoch={ckpt['epoch']}, val_c={ckpt['val_c']:.4f})")
+    print(f"[INFO] Loaded checkpoint (epoch={ckpt['epoch']}, val_c={ckpt['val_c']:.4f})")
 
     img_encoder.eval(); clin_mlp.eval(); fusion.eval()
 
     # Export risks
     os.makedirs(args.out_dir, exist_ok=True)
-    export_risks(train_loader, img_encoder, clin_mlp, fusion, device, os.path.join(args.out_dir, "train_risks.csv"))
-    export_risks(val_loader, img_encoder, clin_mlp, fusion, device, os.path.join(args.out_dir, "val_risks.csv"))
+    export_risks(train_loader, img_encoder, clin_mlp, fusion, device,
+                 os.path.join(args.out_dir, "train_risks.csv"), "train")
+    export_risks(val_loader, img_encoder, clin_mlp, fusion, device,
+                 os.path.join(args.out_dir, "val_risks.csv"), "val")
+
+    print("[DONE] Export completed!")
 
 
 if __name__ == "__main__":
