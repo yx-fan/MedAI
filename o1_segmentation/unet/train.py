@@ -5,7 +5,7 @@ import torch
 import argparse
 import torch.backends.cudnn as cudnn
 from torch.optim import AdamW
-from torch.optim.lr_scheduler import CosineAnnealingLR, LinearLR, SequentialLR, ReduceLROnPlateau
+from torch.optim.lr_scheduler import ReduceLROnPlateau
 from torch.utils.tensorboard import SummaryWriter
 from tqdm import tqdm, trange
 
@@ -13,7 +13,11 @@ from monai.inferers import sliding_window_inference
 from monai.data import decollate_batch
 
 from data_loader import get_dataloaders
-from models import build_model, loss_fn, dice_metric, precision_metric, recall_metric, specificity_metric, post_pred, post_label
+from models import (
+    build_model, loss_fn,
+    dice_metric, precision_metric, recall_metric, specificity_metric,
+    post_pred, post_label
+)
 from utils import log_gpu, log_prediction
 
 # ==============================
@@ -66,9 +70,10 @@ model = build_model(device)
 # Loss, Optimizer, Scheduler
 # ==============================
 optimizer = AdamW(model.parameters(), lr=learning_rate, weight_decay=1e-5)
-warmup = LinearLR(optimizer, start_factor=1e-2, total_iters=5)
-cosine = CosineAnnealingLR(optimizer, T_max=base_epochs, eta_min=1e-6)
-scheduler = ReduceLROnPlateau(optimizer, mode="max", factor=0.5, patience=10, min_lr=1e-6, verbose=True)
+scheduler = ReduceLROnPlateau(
+    optimizer, mode="max", factor=0.5,
+    patience=10, min_lr=1e-6, verbose=True
+)
 
 # ==============================
 # AMP Scaler
@@ -100,10 +105,6 @@ if args.resume:
         total_epochs = max(base_epochs, start_epoch)
     num_epochs = total_epochs
     print(f"[INFO] Will train epochs [{start_epoch} -> {num_epochs})")
-    warmup = LinearLR(optimizer, start_factor=1e-2, total_iters=5)
-    cosine = CosineAnnealingLR(optimizer, T_max=num_epochs, eta_min=1e-6)
-    scheduler = SequentialLR(optimizer, schedulers=[warmup, cosine], milestones=[5])
-    scheduler.last_epoch = start_epoch
 
 # ==============================
 # CSV Logger
@@ -114,8 +115,10 @@ log_mode = "a" if os.path.exists(log_path) else "w"
 with open(log_path, log_mode, newline="") as f:
     writer_csv = csv.writer(f)
     if write_header:
-        writer_csv.writerow(["epoch", "train_loss", "val_loss", "fg_dice_mean", "fg_dice_std",
-                             "precision", "recall", "specificity", "miou", "lr", "grad_norm"])
+        writer_csv.writerow([
+            "epoch", "train_loss", "val_loss", "fg_dice_mean", "fg_dice_std",
+            "precision", "recall", "specificity", "miou", "lr", "grad_norm"
+        ])
 
 # ==============================
 # Training Loop
@@ -156,7 +159,6 @@ for epoch in trange(start_epoch, num_epochs, desc="Total Progress"):
     model.eval()
     val_loss = 0.0
     dice_metric.reset(); precision_metric.reset(); recall_metric.reset(); specificity_metric.reset()
-    ious = []
     with torch.inference_mode(), torch.amp.autocast("cuda", enabled=(device.type == "cuda")):
         for step, batch in enumerate(tqdm(val_loader, desc="Validation", leave=False)):
             images = batch["image"].to(device)
@@ -200,12 +202,19 @@ for epoch in trange(start_epoch, num_epochs, desc="Total Progress"):
 
     # -------- Save --------
     latest_path = os.path.join(save_dir, "latest_model.pth")
-    torch.save({"epoch": epoch + 1, "model": model.state_dict(), "optimizer": optimizer.state_dict(), "fg_dice": fg_dice_mean}, latest_path)
+    torch.save({
+        "epoch": epoch + 1,
+        "model": model.state_dict(),
+        "optimizer": optimizer.state_dict(),
+        "fg_dice": fg_dice_mean
+    }, latest_path)
     if fg_dice_mean > best_dice:
         best_dice = fg_dice_mean
         best_path = os.path.join(save_dir, "best_model.pth")
         torch.save(model.state_dict(), best_path)
         print(f"[INFO] Best model updated: {best_path} (FG Dice={best_dice:.4f})")
+
+    # --- LR scheduler update ---
     scheduler.step(fg_dice_mean)
 
 writer.close()
