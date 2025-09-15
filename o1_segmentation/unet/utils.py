@@ -2,7 +2,6 @@ import os
 import csv
 import torch
 import matplotlib.pyplot as plt
-import wandb
 
 # ==============================
 # Helper: GPU memory logger
@@ -14,13 +13,28 @@ def log_gpu(stage: str):
 
 
 # ==============================
-# Helper: WandB prediction visualization
+# Helper: TensorBoard prediction visualization
 # ==============================
-def log_prediction(image, label, pred, epoch):
+def log_prediction(writer, image, label, pred, epoch):
+    """
+    Logs a mid-slice visualization (image, GT, Pred) to TensorBoard.
+    Args:
+        writer: TensorBoard SummaryWriter
+        image: input image tensor (numpy) [B, C, H, W, D]
+        label: ground truth mask (numpy) [B, C, H, W, D]
+        pred: model prediction (numpy) [B, C, H, W, D]
+        epoch: current epoch number
+    """
     mid = image.shape[-1] // 2
-    plt.figure(figsize=(12, 4))
-    plt.subplot(1, 3, 1); plt.imshow(image[0, 0, :, :, mid], cmap="gray"); plt.title("Image")
-    plt.subplot(1, 3, 2); plt.imshow(label[0, 0, :, :, mid]); plt.title("GT")
-    plt.subplot(1, 3, 3); plt.imshow(pred[0, 1, :, :, mid]); plt.title("Pred")
-    wandb.log({"Predictions": wandb.Image(plt)}, step=epoch)
-    plt.close()
+    fig, ax = plt.subplots(1, 3, figsize=(12, 4))
+    ax[0].imshow(image[0, 0, :, :, mid], cmap="gray")
+    ax[0].set_title("Image"); ax[0].axis("off")
+
+    ax[1].imshow(label[0, 0, :, :, mid])
+    ax[1].set_title("GT"); ax[1].axis("off")
+
+    ax[2].imshow(pred[0, 1, :, :, mid])
+    ax[2].set_title("Pred"); ax[2].axis("off")
+
+    writer.add_figure("Predictions", fig, global_step=epoch)
+    plt.close(fig)

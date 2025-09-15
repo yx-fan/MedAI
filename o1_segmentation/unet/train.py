@@ -187,8 +187,15 @@ for epoch in trange(start_epoch, num_epochs, desc="Total Progress"):
     print(f"Val Loss: {avg_val_loss:.4f}, Dice={fg_dice_mean:.4f}")
     log_gpu("After Validation")
 
+    # -------- TensorBoard log --------
+    writer.add_scalar("Loss/train", avg_train_loss, epoch+1)
+    writer.add_scalar("Loss/val", avg_val_loss, epoch+1)
+    writer.add_scalar("Dice/val_mean", fg_dice_mean, epoch+1)
+    writer.add_scalar("GradNorm", grad_norm, epoch+1)
+    writer.add_scalar("LR", scheduler.get_last_lr()[0], epoch+1)
+
     if (epoch + 1) % 10 == 0:
-        log_prediction(images.cpu().numpy(), masks.cpu().numpy(), outputs.cpu().numpy(), epoch+1)
+        log_prediction(writer, images.cpu().numpy(), masks.cpu().numpy(), outputs.cpu().numpy(), epoch+1)
 
     # -------- Save --------
     latest_path = os.path.join(save_dir, "latest_model.pth")
