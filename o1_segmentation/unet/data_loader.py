@@ -19,7 +19,7 @@ from monai.transforms import (
 )
 from monai.data import Dataset, list_data_collate
 
-def get_dataloaders(data_dir="./data/raw", batch_size=2, patch_size=(160, 160, 64), debug=False):
+def get_dataloaders(data_dir="./data/raw", batch_size=2, patch_size=(160, 160, 128), debug=False):
     """
     Create train and validation dataloaders for rectal cancer CT segmentation.
     Args:

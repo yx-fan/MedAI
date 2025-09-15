@@ -5,7 +5,7 @@ import torch
 import argparse
 import torch.backends.cudnn as cudnn
 from torch.optim import AdamW
-from torch.optim.lr_scheduler import CosineAnnealingLR, LinearLR, SequentialLR
+from torch.optim.lr_scheduler import CosineAnnealingLR, LinearLR, SequentialLR, ReduceLROnPlateau
 from torch.utils.tensorboard import SummaryWriter
 from tqdm import tqdm, trange
 
@@ -68,7 +68,7 @@ model = build_model(device)
 optimizer = AdamW(model.parameters(), lr=learning_rate, weight_decay=1e-5)
 warmup = LinearLR(optimizer, start_factor=1e-2, total_iters=5)
 cosine = CosineAnnealingLR(optimizer, T_max=base_epochs, eta_min=1e-6)
-scheduler = SequentialLR(optimizer, schedulers=[warmup, cosine], milestones=[5])
+scheduler = ReduceLROnPlateau(optimizer, mode="max", factor=0.5, patience=10, min_lr=1e-6, verbose=True)
 
 # ==============================
 # AMP Scaler
@@ -165,7 +165,7 @@ for epoch in trange(start_epoch, num_epochs, desc="Total Progress"):
             # --- Use sliding window inference instead of direct forward ---
             outputs = sliding_window_inference(
                 images,
-                roi_size=(64, 64, 32) if args.debug else (160, 160, 64),
+                roi_size=(64, 64, 32) if args.debug else (160, 160, 128),
                 sw_batch_size=1 if args.debug else 4,
                 predictor=model,
                 overlap=0.5,          # --- Modified: increased overlap
@@ -192,7 +192,8 @@ for epoch in trange(start_epoch, num_epochs, desc="Total Progress"):
     writer.add_scalar("Loss/val", avg_val_loss, epoch+1)
     writer.add_scalar("Dice/val_mean", fg_dice_mean, epoch+1)
     writer.add_scalar("GradNorm", grad_norm, epoch+1)
-    writer.add_scalar("LR", scheduler.get_last_lr()[0], epoch+1)
+    current_lr = optimizer.param_groups[0]['lr']
+    writer.add_scalar("LR", current_lr, epoch+1)
 
     if (epoch + 1) % 10 == 0:
         log_prediction(writer, images.cpu().numpy(), masks.cpu().numpy(), outputs.cpu().numpy(), epoch+1)
@@ -205,6 +206,6 @@ for epoch in trange(start_epoch, num_epochs, desc="Total Progress"):
         best_path = os.path.join(save_dir, "best_model.pth")
         torch.save(model.state_dict(), best_path)
         print(f"[INFO] Best model updated: {best_path} (FG Dice={best_dice:.4f})")
-    scheduler.step()
+    scheduler.step(fg_dice_mean)
 
 writer.close()
