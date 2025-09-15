@@ -10,6 +10,9 @@ from torch.utils.tensorboard import SummaryWriter
 import wandb
 from tqdm import tqdm, trange
 
+from monai.inferers import sliding_window_inference
+from monai.data import decollate_batch
+
 from data_loader import get_dataloaders
 from models import build_model, loss_fn, dice_metric, precision_metric, recall_metric, specificity_metric, post_pred, post_label
 from utils import log_gpu, log_prediction
@@ -173,15 +176,27 @@ for epoch in trange(start_epoch, num_epochs, desc="Total Progress"):
         for step, batch in enumerate(tqdm(val_loader, desc="Validation", leave=False)):
             images = batch["image"].to(device)
             masks  = batch["label"].to(device).long()
-            outputs = model(images)
+
+            # --- Use sliding window inference instead of direct forward ---
+            outputs = sliding_window_inference(
+                images,
+                roi_size=(64, 64, 32) if args.debug else (160, 160, 64),
+                sw_batch_size=1 if args.debug else 4,
+                predictor=model,
+                overlap=0.5,          # --- Modified: increased overlap
+                mode="gaussian"       # --- Modified: gaussian blending
+            )
             loss = loss_fn(outputs, masks)  # --- Modified: use total_loss ---
             val_loss += loss.item()
-            y_pred_list = [post_pred(o) for o in outputs]
-            y_list      = [post_label(y) for y in masks]
+
+            # --- Decollate batch before post transforms ---
+            y_pred_list = [post_pred(o) for o in decollate_batch(outputs)]
+            y_list      = [post_label(y) for y in decollate_batch(masks)]
             dice_metric(y_pred=y_pred_list, y=y_list)
             precision_metric(y_pred=y_pred_list, y=y_list)
             recall_metric(y_pred=y_pred_list, y=y_list)
             specificity_metric(y_pred=y_pred_list, y=y_list)
+
     avg_val_loss = val_loss / max(1, len(val_loader))
     fg_dice_mean = float(torch.as_tensor(dice_metric.aggregate()).mean().item())
     print(f"Val Loss: {avg_val_loss:.4f}, Dice={fg_dice_mean:.4f}")
