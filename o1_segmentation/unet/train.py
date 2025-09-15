@@ -7,7 +7,6 @@ import torch.backends.cudnn as cudnn
 from torch.optim import AdamW
 from torch.optim.lr_scheduler import CosineAnnealingLR, LinearLR, SequentialLR
 from torch.utils.tensorboard import SummaryWriter
-import wandb
 from tqdm import tqdm, trange
 
 from monai.inferers import sliding_window_inference
@@ -40,20 +39,6 @@ learning_rate = 2e-4
 save_dir = "data/unet_debug" if args.debug else "data/unet"
 os.makedirs(save_dir, exist_ok=True)
 best_dice = -1.0
-
-# ==============================
-# WandB Init
-# ==============================
-wandb.init(
-    project="rectal-cancer-unet-seg",
-    config={
-        "epochs": num_epochs,
-        "batch_size": 1 if args.debug else 2,
-        "learning_rate": learning_rate,
-        "architecture": "UNet"
-    },
-    settings=wandb.Settings(init_timeout=300, start_method="thread")
-)
 
 from datetime import datetime
 # ==============================
@@ -215,5 +200,4 @@ for epoch in trange(start_epoch, num_epochs, desc="Total Progress"):
         print(f"[INFO] Best model updated: {best_path} (FG Dice={best_dice:.4f})")
     scheduler.step()
 
-wandb.finish()
 writer.close()
