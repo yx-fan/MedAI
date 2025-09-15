@@ -18,7 +18,7 @@ from monai.transforms import (
 )
 from monai.data import Dataset, list_data_collate
 
-def get_dataloaders(data_dir="./data/raw", batch_size=2, patch_size=(128, 128, 64), debug=False):
+def get_dataloaders(data_dir="./data/raw", batch_size=2, patch_size=(160, 160, 64), debug=False):
     """
     Create train and validation dataloaders for rectal cancer CT segmentation.
     Args:
@@ -49,21 +49,17 @@ def get_dataloaders(data_dir="./data/raw", batch_size=2, patch_size=(128, 128, 6
     train_transforms = Compose([
         LoadImaged(keys=["image", "label"]),
         EnsureChannelFirstd(keys=["image", "label"]),
-        # Spacingd(keys=["image", "label"], pixdim=(1.0, 1.0, 3.0), mode=("bilinear", "nearest")),
-        ScaleIntensityRanged(keys=["image"], a_min=-100, a_max=94, b_min=0.0, b_max=1.0, clip=True),
+        Spacingd(keys=["image", "label"], pixdim=(1.0, 1.0, 1.0), mode=("bilinear", "nearest")),
+        ScaleIntensityRanged(keys=["image"], a_min=-200, a_max=200, b_min=0.0, b_max=1.0, clip=True),
         RandCropByPosNegLabeld(
             keys=["image", "label"],
             label_key="label",
-            spatial_size=patch_size,   # Default (128, 128, 64) but can be overridden
-            pos=4, neg=1,              # tuned ratio to increase foreground sampling
+            spatial_size=patch_size,
+            pos=4, neg=1,
             num_samples=8,
         ),
         RandFlipd(keys=["image", "label"], prob=0.5, spatial_axis=[0, 1]),  # Flip along both spatial axes
         RandRotate90d(keys=["image", "label"], prob=0.5, max_k=3),          # Rotate 90, 180, or 270 degrees
-        RandRotated(keys=["image", "label"], range_x=0.1, range_y=0.1, range_z=0.1, prob=0.3, mode=("bilinear", "nearest")),  # small random rotation
-        RandZoomd(keys=["image", "label"], min_zoom=0.9, max_zoom=1.1, prob=0.3, mode=("trilinear", "nearest")),               # random zoom
-        RandGaussianNoised(keys=["image"], prob=0.15, mean=0.0, std=0.01),                      # random gaussian noise
-        RandAdjustContrastd(keys=["image"], prob=0.3, gamma=(0.7, 1.5)),                        # random contrast adjust
         EnsureTyped(keys=["image", "label"]),
     ])
 
@@ -71,8 +67,8 @@ def get_dataloaders(data_dir="./data/raw", batch_size=2, patch_size=(128, 128, 6
     val_transforms = Compose([
         LoadImaged(keys=["image", "label"]),
         EnsureChannelFirstd(keys=["image", "label"]),
-        # Spacingd(keys=["image", "label"], pixdim=(1.0, 1.0, 3.0), mode=("bilinear", "nearest")),
-        ScaleIntensityRanged(keys=["image"], a_min=-100, a_max=94, b_min=0.0, b_max=1.0, clip=True),
+        Spacingd(keys=["image", "label"], pixdim=(1.0, 1.0, 1.0), mode=("bilinear", "nearest")),
+        ScaleIntensityRanged(keys=["image"], a_min=-200, a_max=200, b_min=0.0, b_max=1.0, clip=True),
         EnsureTyped(keys=["image", "label"]),
     ])
 

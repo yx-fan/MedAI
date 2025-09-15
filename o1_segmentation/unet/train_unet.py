@@ -12,7 +12,7 @@ from monai.losses import TverskyLoss, HausdorffDTLoss
 from monai.metrics import DiceMetric, HausdorffDistanceMetric
 from monai.metrics import ConfusionMatrixMetric
 from monai.inferers import sliding_window_inference
-from monai.transforms import AsDiscrete
+from monai.transforms import AsDiscrete, KeepLargestConnectedComponent, Compose
 from monai.data import decollate_batch
 import torch.backends.cudnn as cudnn
 from tqdm import tqdm, trange
@@ -22,7 +22,7 @@ import matplotlib.pyplot as plt
 from torch.utils.tensorboard import SummaryWriter
 from monai.losses import DiceCELoss
 
-# ==============================
+# ==============================    
 # FocalTverskyLossCompat (newly added)
 # ==============================
 class FocalTverskyLossCompat(nn.Module):
@@ -51,7 +51,10 @@ class FocalTverskyLossCompat(nn.Module):
 # ==============================
 # Post transforms
 # ==============================
-post_pred = AsDiscrete(argmax=True, to_onehot=2)
+post_pred = Compose([
+    AsDiscrete(argmax=True, to_onehot=2),
+    KeepLargestConnectedComponent(applied_labels=[1], is_onehot=True),
+])
 post_label = AsDiscrete(to_onehot=2)
 
 # ==============================
@@ -74,7 +77,7 @@ base_epochs = 100 if not args.debug else 3
 num_epochs = base_epochs
 start_epoch = 0
 
-learning_rate = 1e-4
+learning_rate = 2e-4
 save_dir = "data/unet_debug" if args.debug else "data/unet"
 os.makedirs(save_dir, exist_ok=True)
 best_dice = -1.0
@@ -117,7 +120,7 @@ model = UNet(
     spatial_dims=3,          # 3D segmentation
     in_channels=1,           # single-channel CT
     out_channels=2,          # foreground + background
-    channels=(16, 32, 64, 128, 256),  # channels at each layer
+    channels=(32, 64, 128, 256, 512),  # channels at each layer
     strides=(2, 2, 2, 2),    # downsampling at each layer
     num_res_units=2,         # number of residual units
 ).to(device)
@@ -126,29 +129,29 @@ model = UNet(
 # Loss, Optimizer, Scheduler
 # ==============================
 # loss_fn = DiceFocalLoss(to_onehot_y=True, softmax=True, gamma=2.0)
-# loss_fn = DiceCELoss(to_onehot_y=True, softmax=True)
+loss_fn = DiceCELoss(to_onehot_y=True, softmax=True)
 # --- Modified: combined loss ---
-ce_weight = torch.tensor([0.2, 0.8], device=device)
+# ce_weight = torch.tensor([0.2, 0.8], device=device)
 
-loss_dicece = DiceCELoss(
-    include_background=False,
-    to_onehot_y=True, softmax=True,
-    lambda_dice=0.7, lambda_ce=0.3,
-    weight=ce_weight
-)
-loss_ftv = FocalTverskyLossCompat(
-    include_background=False,
-    to_onehot_y=True, softmax=True,
-    alpha=0.7, beta=0.3, gamma=0.75
-)
-loss_boundary = HausdorffDTLoss(
-    include_background=False,
-    to_onehot_y=True, softmax=True,
-    alpha=2.0
-)
+# loss_dicece = DiceCELoss(
+#     include_background=False,
+#     to_onehot_y=True, softmax=True,
+#     lambda_dice=0.7, lambda_ce=0.3,
+#     weight=ce_weight
+# )
+# loss_ftv = FocalTverskyLossCompat(
+#     include_background=False,
+#     to_onehot_y=True, softmax=True,
+#     alpha=0.7, beta=0.3, gamma=0.75
+# )
+# loss_boundary = HausdorffDTLoss(
+#     include_background=False,
+#     to_onehot_y=True, softmax=True,
+#     alpha=2.0
+# )
 
-def total_loss(pred, target):
-    return 0.5 * loss_dicece(pred, target) + 0.4 * loss_ftv(pred, target) + 0.1 * loss_boundary(pred, target)
+# def total_loss(pred, target):
+#     return 0.5 * loss_dicece(pred, target) + 0.4 * loss_ftv(pred, target) + 0.1 * loss_boundary(pred, target)
 
 optimizer = AdamW(model.parameters(), lr=learning_rate, weight_decay=1e-5)
 
@@ -258,7 +261,7 @@ for epoch in trange(start_epoch, num_epochs, desc="Total Progress"):
 
         with torch.amp.autocast("cuda", enabled=(device.type == "cuda")):
             outputs = model(images)
-            loss = total_loss(outputs, masks)  # --- Modified: use total_loss ---
+            loss = loss_fn(outputs, masks)  # --- Modified: use total_loss ---
 
         scaler.scale(loss).backward()
 
@@ -301,13 +304,13 @@ for epoch in trange(start_epoch, num_epochs, desc="Total Progress"):
             with torch.amp.autocast("cuda", enabled=(device.type == "cuda")):
                 outputs = sliding_window_inference(
                     images,
-                    roi_size=(64, 64, 32) if args.debug else (128, 128, 64),
+                    roi_size=(64, 64, 32) if args.debug else (160, 160, 64),
                     sw_batch_size=1 if args.debug else 4,
                     predictor=model,
                     overlap=0.5,          # --- Modified: increased overlap
                     mode="gaussian"       # --- Modified: gaussian blending
                 )
-                loss = total_loss(outputs, masks)  # --- Modified: use total_loss ---
+                loss = loss_fn(outputs, masks)  # --- Modified: use total_loss ---
 
             val_loss += loss.item()
 
