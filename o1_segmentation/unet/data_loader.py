@@ -15,7 +15,7 @@ from monai.transforms import (
     RandZoomd,
     RandGaussianNoised,
     RandAdjustContrastd,
-    DivisiblePad,
+    DivisiblePadd,
 )
 from monai.data import Dataset, list_data_collate
 
@@ -62,7 +62,7 @@ def get_dataloaders(data_dir="./data/raw", batch_size=2, patch_size=(160, 160, 6
         RandFlipd(keys=["image", "label"], prob=0.5, spatial_axis=[0, 1]),  # Flip along both spatial axes
         RandRotate90d(keys=["image", "label"], prob=0.5, max_k=3),          # Rotate 90, 180, or 270 degrees
         EnsureTyped(keys=["image", "label"]),
-        DivisiblePad(keys=["image", "label"], k=16),
+        DivisiblePadd(keys=["image", "label"], k=32),
     ])
 
     # Validation transforms (No cropping or augmentation, just normalization)
