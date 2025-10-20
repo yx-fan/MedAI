@@ -124,10 +124,10 @@ def build_model(device):
         in_ch=1,
         out_ch=2,
         img_size=(128, 128, 64),
-        patch_size=8,
-        emb_size=512,
-        depth=8,
-        heads=8
+        patch_size=16,
+        emb_size=256,
+        depth=4,
+        heads=4
     ).to(device)
     return model
 
