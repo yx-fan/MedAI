@@ -31,16 +31,21 @@ class PatchEmbedding3D(nn.Module):
         super().__init__()
         self.patch_size = patch_size
         self.proj = nn.Conv3d(in_ch, emb_size, kernel_size=patch_size, stride=patch_size)
-        num_patches = (img_size[0] // patch_size) * (img_size[1] // patch_size) * (img_size[2] // patch_size)
-        self.pos_emb = nn.Parameter(torch.randn(1, num_patches, emb_size))
+        self.emb_size = emb_size
+        self.pos_emb = None  # Delayed creation
 
     def forward(self, x):
         x = self.proj(x)  # [B, E, D', H', W']
         B, E, D, H, W = x.shape
+        num_patches = D * H * W
+
+        # Create positional embeddings if not exist or size mismatch
+        if self.pos_emb is None or self.pos_emb.shape[1] != num_patches:
+            self.pos_emb = nn.Parameter(torch.randn(1, num_patches, E, device=x.device))
+
         x = x.flatten(2).transpose(1, 2)  # [B, N, E]
         x = x + self.pos_emb
         return x, (D, H, W)
-
 
 class TransformerEncoder3D(nn.Module):
     """Transformer encoder for 3D tokens."""
