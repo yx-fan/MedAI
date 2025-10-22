@@ -44,7 +44,7 @@ def get_infer_loader(image_path, label_path=None):
     transforms = Compose([
         LoadImaged(keys=keys),
         EnsureChannelFirstd(keys=keys),
-        ScaleIntensityRanged(keys=["image"], a_min=-100, a_max=94, b_min=0.0, b_max=1.0, clip=True),
+        ScaleIntensityRanged(keys=["image"], a_min=-200, a_max=200, b_min=0.0, b_max=1.0, clip=True),
         EnsureTyped(keys=keys),
     ])
     ds = Dataset([data], transform=transforms)
@@ -102,9 +102,9 @@ def main():
     parser.add_argument("--image_dir", required=True, help="Directory with images (.nii.gz)")
     parser.add_argument("--label_dir", default=None, help="Optional label directory for visualization")
     parser.add_argument("--out_dir", default="./pred_out", help="Output directory")
-    parser.add_argument("--roi", default="128,128,64", help="Sliding window ROI")
-    parser.add_argument("--overlap", type=float, default=0.25, help="Sliding window overlap")
-    parser.add_argument("--sw_batch_size", type=int, default=1)
+    parser.add_argument("--roi", default="160,160,128", help="Sliding window ROI")
+    parser.add_argument("--overlap", type=float, default=0.5, help="Sliding window overlap")
+    parser.add_argument("--sw_batch_size", type=int, default=4)
     args = parser.parse_args()
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -135,7 +135,8 @@ def main():
                     roi_size=roi_size,
                     sw_batch_size=args.sw_batch_size,
                     predictor=model,
-                    overlap=args.overlap
+                    overlap=args.overlap,
+                    mode="gaussian"
                 )
                 pred = torch.argmax(logits, dim=1, keepdim=True).cpu()
 
@@ -152,8 +153,8 @@ def main():
                     lbl = batch["label"].numpy()[0, 0]
                     gt_np = np.stack([1 - lbl, lbl], axis=0)
 
-                out_png = os.path.join(args.out_dir, f"{base}_viz.png")
-                visualize_mid_slices(img_np, pred_np, gt_np, out_png)
+                # out_png = os.path.join(args.out_dir, f"{base}_viz.png")
+                # visualize_mid_slices(img_np, pred_np, gt_np, out_png)
 
     print(f"[INFO] All predictions saved to: {args.out_dir}")
 
