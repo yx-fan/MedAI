@@ -45,9 +45,10 @@ def evaluate(pred_dir, label_dir, out_csv="dice_results.csv"):
         dice = dice_metric(y_pred=pred, y=label)[1].item()
         results.append(dice)
 
-        with open(out_csv, "a", newline="") as f:
-            writer = csv.DictWriter(f, fieldnames=["case", "dice"])
-            writer.writerow({"case": f, "dice": dice})
+        with open(out_csv, "a", newline="") as csvfile:
+            writer = csv.DictWriter(csvfile, fieldnames=["case", "dice"])
+            writer.writerow({"case": os.path.basename(pred_path), "dice": dice})
+
 
     avg_dice = np.mean(results)
     print(f"\nAverage Dice = {avg_dice:.4f}")
