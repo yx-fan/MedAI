@@ -16,7 +16,7 @@ def load_nifti_as_tensor(path):
 def evaluate(pred_dir, label_dir, out_csv="dice_results.csv"):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    dice_metric = DiceMetric(include_background=False, reduction="mean")
+    dice_metric = DiceMetric(include_background=True, reduction="none")
     post_pred = AsDiscrete(argmax=False, to_onehot=2)
     post_label = AsDiscrete(to_onehot=2)
 
@@ -37,7 +37,7 @@ def evaluate(pred_dir, label_dir, out_csv="dice_results.csv"):
         pred, label = EnsureType()(pred), EnsureType()(label)
         pred, label = post_pred(pred).to(device), post_label(label).to(device)
 
-        dice = dice_metric(y_pred=pred, y=label).item()
+        dice = dice_metric(y_pred=pred, y=label)[1].item()
         results.append({"case": f, "dice": dice})
 
     avg_dice = np.mean([r["dice"] for r in results])
