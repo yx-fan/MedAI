@@ -23,6 +23,11 @@ def evaluate(pred_dir, label_dir, out_csv="dice_results.csv"):
     pred_files = sorted([f for f in os.listdir(pred_dir) if f.endswith(".nii") or f.endswith(".nii.gz")])
     results = []
 
+    # 初始化 CSV 并写表头
+    with open(out_csv, "w", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=["case", "dice"])
+        writer.writeheader()
+
     for f in tqdm(pred_files, desc="Evaluating Dice"):
         pred_path = os.path.join(pred_dir, f)
         label_path = os.path.join(label_dir, f.replace("_pred", ""))
@@ -38,15 +43,17 @@ def evaluate(pred_dir, label_dir, out_csv="dice_results.csv"):
         pred, label = post_pred(pred).to(device), post_label(label).to(device)
 
         dice = dice_metric(y_pred=pred, y=label)[1].item()
-        results.append({"case": f, "dice": dice})
+        results.append(dice)
 
-    avg_dice = np.mean([r["dice"] for r in results])
+        with open(out_csv, "a", newline="") as f:
+            writer = csv.DictWriter(f, fieldnames=["case", "dice"])
+            writer.writerow({"case": f, "dice": dice})
+
+    avg_dice = np.mean(results)
     print(f"\nAverage Dice = {avg_dice:.4f}")
 
-    with open(out_csv, "w", newline="") as f:
+    with open(out_csv, "a", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=["case", "dice"])
-        writer.writeheader()
-        writer.writerows(results)
         writer.writerow({"case": "Average", "dice": avg_dice})
 
     print(f"[INFO] Results saved to {out_csv}")
