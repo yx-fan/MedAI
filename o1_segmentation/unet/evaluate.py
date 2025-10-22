@@ -16,32 +16,33 @@ def load_nifti_as_tensor(path):
 def evaluate(pred_dir, label_dir, out_csv="dice_results.csv"):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    dice_metric = DiceMetric(include_background=False, reduction="none")
+    dice_metric = DiceMetric(include_background=False, reduction="mean")
+    post_pred = AsDiscrete(argmax=False, to_onehot=2)
+    post_label = AsDiscrete(to_onehot=2)
+
     pred_files = sorted([f for f in os.listdir(pred_dir) if f.endswith(".nii") or f.endswith(".nii.gz")])
     results = []
 
     for f in tqdm(pred_files, desc="Evaluating Dice"):
         pred_path = os.path.join(pred_dir, f)
-        label_path = os.path.join(label_dir, f.replace("_pred", "").replace(".nii.gz", ".nii").replace(".nii", ".nii.gz"))
+        label_path = os.path.join(label_dir, f.replace("_pred", ""))
 
         if not os.path.exists(label_path):
             print(f"[WARN] Missing label for {f}, skipped.")
             continue
 
-        pred = load_nifti_as_tensor(pred_path).to(device)
-        label = load_nifti_as_tensor(label_path).to(device)
+        pred = load_nifti_as_tensor(pred_path)
+        label = load_nifti_as_tensor(label_path)
 
-        # Convert to binary masks
-        pred = AsDiscrete(threshold=0.5)(EnsureType()(pred))
-        label = AsDiscrete(threshold=0.5)(EnsureType()(label))
+        pred, label = EnsureType()(pred), EnsureType()(label)
+        pred, label = post_pred(pred).to(device), post_label(label).to(device)
 
-        dice = dice_metric(y_pred=pred, y=label).mean().item()
+        dice = dice_metric(y_pred=pred, y=label).item()
         results.append({"case": f, "dice": dice})
 
     avg_dice = np.mean([r["dice"] for r in results])
     print(f"\nAverage Dice = {avg_dice:.4f}")
 
-    # Save CSV
     with open(out_csv, "w", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=["case", "dice"])
         writer.writeheader()
