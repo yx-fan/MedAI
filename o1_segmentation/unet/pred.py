@@ -1,15 +1,13 @@
 import os
-import argparse
 import torch
 import numpy as np
 import matplotlib.pyplot as plt
 import nibabel as nib
-
+from tqdm import tqdm
 from monai.networks.nets import UNet
 from monai.inferers import sliding_window_inference
 from monai.transforms import (
-    Compose, LoadImaged, EnsureChannelFirstd, ScaleIntensityRanged,
-    EnsureTyped
+    Compose, LoadImaged, EnsureChannelFirstd, ScaleIntensityRanged, EnsureTyped
 )
 from monai.data import Dataset, DataLoader, list_data_collate
 
@@ -39,7 +37,7 @@ def load_weights(model, ckpt_path, device):
 def get_infer_loader(image_path, label_path=None):
     data = {"image": image_path}
     keys = ["image"]
-    if label_path is not None and os.path.isfile(label_path):
+    if label_path and os.path.isfile(label_path):
         data["label"] = label_path
         keys.append("label")
 
@@ -55,56 +53,42 @@ def get_infer_loader(image_path, label_path=None):
 
 
 def save_nifti_simple(pred_tensor, out_path):
-    """
-    Save predicted mask as [D,H,W] nii.gz
-    pred_tensor: torch.Tensor [1,1,D,H,W] or [1,D,H,W]
-    """
-    if pred_tensor.ndim == 5:  # [1,1,D,H,W]
-        pred_tensor = pred_tensor.squeeze(0).squeeze(0)  # [D,H,W]
-    elif pred_tensor.ndim == 4:  # [1,D,H,W]
-        pred_tensor = pred_tensor.squeeze(0)  # [D,H,W]
+    if pred_tensor.ndim == 5:
+        pred_tensor = pred_tensor.squeeze(0).squeeze(0)
+    elif pred_tensor.ndim == 4:
+        pred_tensor = pred_tensor.squeeze(0)
     else:
         raise ValueError(f"Unexpected shape: {pred_tensor.shape}")
 
     pred_np = pred_tensor.cpu().numpy().astype(np.uint8)
     affine = np.eye(4)
     nib.save(nib.Nifti1Image(pred_np, affine), out_path)
-    print(f"[INFO] Saved prediction NIfTI to: {out_path}, shape={pred_np.shape}")
+    print(f"[INFO] Saved NIfTI to: {out_path}")
 
 
 def visualize_mid_slices(image_np, pred_np, gt_np, out_png):
-    """
-    image_np: [1,D,H,W]
-    pred_np:  [2,D,H,W] (for visualization, one-hot)
-    gt_np:    [2,D,H,W] or None
-    """
-    img = image_np[0]       # [D,H,W]
-    pred_fg = pred_np[1]    # 前景通道
-
+    img = image_np[0]
+    pred_fg = pred_np[1]
     mid = img.shape[0] // 2
-    img_slice = img[mid]
-    pred_slice = pred_fg[mid]
 
-    ncols = 3 if gt_np is not None else 2
-    plt.figure(figsize=(4 * ncols, 4))
-
-    plt.subplot(1, ncols, 1)
-    plt.imshow(img_slice, cmap="gray")
-    plt.title("Image (mid)"); plt.axis("off")
+    plt.figure(figsize=(12, 4))
+    plt.subplot(1, 3 if gt_np is not None else 2, 1)
+    plt.imshow(img[mid], cmap="gray")
+    plt.title("Image"); plt.axis("off")
 
     if gt_np is not None:
         gt_fg = gt_np[1]
-        plt.subplot(1, ncols, 2)
+        plt.subplot(1, 3, 2)
         plt.imshow(gt_fg[mid], cmap="gray")
-        plt.title("GT (mid)"); plt.axis("off")
-        ax_idx = 3
+        plt.title("GT"); plt.axis("off")
+        idx = 3
     else:
-        ax_idx = 2
+        idx = 2
 
-    plt.subplot(1, ncols, ax_idx)
-    plt.imshow(img_slice, cmap="gray")
-    plt.imshow(pred_slice, alpha=0.4)
-    plt.title("Pred (overlay, mid)"); plt.axis("off")
+    plt.subplot(1, 3 if gt_np is not None else 2, idx)
+    plt.imshow(img[mid], cmap="gray")
+    plt.imshow(pred_fg[mid], alpha=0.4)
+    plt.title("Pred Overlay"); plt.axis("off")
 
     plt.tight_layout()
     plt.savefig(out_png, dpi=200)
@@ -112,62 +96,66 @@ def visualize_mid_slices(image_np, pred_np, gt_np, out_png):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="3D UNet Inference & Visualization")
-    parser.add_argument("--model", required=True, help="Path to UNet .pth (best_model.pth or latest_model.pth)")
-    parser.add_argument("--image", required=True, help="Path to image .nii.gz")
-    parser.add_argument("--label", default=None, help="(Optional) Path to label .nii.gz for visualization")
+    import argparse
+    parser = argparse.ArgumentParser(description="Batch Inference for 3D UNet")
+    parser.add_argument("--model", required=True, help="Path to model .pth")
+    parser.add_argument("--image_dir", required=True, help="Directory with images (.nii.gz)")
+    parser.add_argument("--label_dir", default=None, help="Optional label directory for visualization")
     parser.add_argument("--out_dir", default="./pred_out", help="Output directory")
-    parser.add_argument("--roi", default="128,128,64", help="Sliding window ROI size, e.g., 128,128,64")
-    parser.add_argument("--overlap", type=float, default=0.25, help="SWI overlap")
-    parser.add_argument("--sw_batch_size", type=int, default=1, help="SWI batch size")
+    parser.add_argument("--roi", default="128,128,64", help="Sliding window ROI")
+    parser.add_argument("--overlap", type=float, default=0.25, help="Sliding window overlap")
+    parser.add_argument("--sw_batch_size", type=int, default=1)
     args = parser.parse_args()
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    print(f"[INFO] Inference on {device}")
+    print(f"[INFO] Running inference on {device}")
 
     model = build_model(device)
     load_weights(model, args.model, device)
     model.eval()
 
-    loader = get_infer_loader(args.image, args.label)
+    os.makedirs(args.out_dir, exist_ok=True)
     roi_size = tuple(int(x) for x in args.roi.split(","))
 
-    with torch.no_grad():
-        for batch in loader:
-            images = batch["image"].to(device)
+    image_files = sorted([f for f in os.listdir(args.image_dir) if f.endswith(".nii.gz")])
+    print(f"[INFO] Found {len(image_files)} images in {args.image_dir}")
 
-            # logits shape: [1,2,D,H,W]
-            logits = sliding_window_inference(
-                images,
-                roi_size=roi_size,
-                sw_batch_size=args.sw_batch_size,
-                predictor=model,
-                overlap=args.overlap
-            )
+    for img_file in tqdm(image_files, desc="Predicting"):
+        img_path = os.path.join(args.image_dir, img_file)
+        label_path = None
+        if args.label_dir:
+            label_path = os.path.join(args.label_dir, img_file)
 
-            # argmax -> [1,1,D,H,W]
-            pred = torch.argmax(logits, dim=1, keepdim=True).cpu()
+        loader = get_infer_loader(img_path, label_path)
+        with torch.no_grad():
+            for batch in loader:
+                images = batch["image"].to(device)
+                logits = sliding_window_inference(
+                    images,
+                    roi_size=roi_size,
+                    sw_batch_size=args.sw_batch_size,
+                    predictor=model,
+                    overlap=args.overlap
+                )
+                pred = torch.argmax(logits, dim=1, keepdim=True).cpu()
 
-            os.makedirs(args.out_dir, exist_ok=True)
-            base = os.path.splitext(os.path.basename(args.image))[0].replace(".nii", "")
-            out_nii = os.path.join(args.out_dir, f"{base}_pred.nii.gz")
-            save_nifti_simple(pred, out_nii)
+                base = os.path.splitext(os.path.basename(img_file))[0].replace(".nii", "")
+                out_nii = os.path.join(args.out_dir, f"{base}_pred.nii.gz")
+                save_nifti_simple(pred, out_nii)
 
-            # --- 可视化 ---
-            img_np = batch["image"].numpy()[0]  # [1,D,H,W]
+                img_np = batch["image"].numpy()[0]
+                pred_bin = pred.numpy()[0, 0]
+                pred_np = np.stack([1 - pred_bin, pred_bin], axis=0)
 
-            # 构造 one-hot 方便显示
-            pred_bin = pred.numpy()[0, 0]       # [D,H,W]
-            pred_np = np.stack([1 - pred_bin, pred_bin], axis=0).astype(np.uint8)
+                gt_np = None
+                if "label" in batch:
+                    lbl = batch["label"].numpy()[0, 0]
+                    gt_np = np.stack([1 - lbl, lbl], axis=0)
 
-            gt_np = None
-            if args.label and "label" in batch:
-                lbl = batch["label"].numpy()[0, 0]  # [D,H,W]
-                gt_np = np.stack([1 - lbl, lbl], axis=0).astype(np.uint8)
+                out_png = os.path.join(args.out_dir, f"{base}_viz.png")
+                visualize_mid_slices(img_np, pred_np, gt_np, out_png)
 
-            out_png = os.path.join(args.out_dir, f"{base}_viz.png")
-            visualize_mid_slices(img_np, pred_np, gt_np, out_png)
-            print(f"[INFO] Saved visualization to: {out_png}")
+    print(f"[INFO] All predictions saved to: {args.out_dir}")
 
 
 if __name__ == "__main__":
