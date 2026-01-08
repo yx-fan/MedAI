@@ -88,18 +88,18 @@ def get_dataloaders(data_dir="./data/raw", batch_size=2, patch_size=(192, 192, 9
     # Loaders
     train_loader = DataLoader(
         train_ds, batch_size=batch_size, shuffle=True,
-        num_workers=2 if debug else 6,   # Reduced to 6 to avoid pin_memory issues
+        num_workers=2 if debug else 2,   # Reduced to 2 to avoid RAM issues with large batch_size
         pin_memory=False,  # Disabled due to multiprocessing compatibility issues
         persistent_workers=not debug,
-        prefetch_factor=2 if not debug else None,  # Prefetch batches for faster loading
+        prefetch_factor=1 if not debug else None,  # Reduced prefetch to save RAM
         collate_fn=list_data_collate
     )
     val_loader = DataLoader(
         val_ds, batch_size=4, shuffle=False,  # Increased to 4 for faster validation (was 2)
-        num_workers=2 if debug else 6,  # Reduced to 6 to avoid pin_memory issues
+        num_workers=2 if debug else 2,  # Reduced to 2 to avoid RAM issues
         pin_memory=False,  # Disabled due to multiprocessing compatibility issues
         persistent_workers=not debug,
-        prefetch_factor=2 if not debug else None,
+        prefetch_factor=1 if not debug else None,  # Reduced prefetch to save RAM
         collate_fn=list_data_collate
     )
 
