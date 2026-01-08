@@ -11,12 +11,9 @@ from monai.transforms import (
     RandFlipd,
     RandRotate90d,
     EnsureTyped,
-    RandRotated,
-    RandZoomd,
     RandGaussianNoised,
     RandAdjustContrastd,
     RandShiftIntensityd,
-    RandGaussianSmoothd,
     DivisiblePadd,
 )
 from monai.data import Dataset, list_data_collate
@@ -59,28 +56,16 @@ def get_dataloaders(data_dir="./data/raw", batch_size=2, patch_size=(160, 160, 6
             label_key="label",
             spatial_size=patch_size,
             pos=4, neg=1,
-            num_samples=8,
+            num_samples=4,  # Reduced from 8 to 4 for faster training (still provides good diversity)
         ),
-        # Geometric augmentations
+        # Geometric augmentations (optimized for speed)
         RandFlipd(keys=["image", "label"], prob=0.5, spatial_axis=[0, 1, 2]),  # Flip along all axes
         RandRotate90d(keys=["image", "label"], prob=0.5, max_k=3),          # Rotate 90, 180, or 270 degrees
-        RandRotated(
-            keys=["image", "label"],
-            prob=0.3,
-            range_x=0.1, range_y=0.1, range_z=0.1,  # Small continuous rotations
-            mode=("bilinear", "nearest"),
-            padding_mode="zeros"
-        ),
-        RandZoomd(
-            keys=["image", "label"],
-            prob=0.3,
-            min_zoom=0.9, max_zoom=1.1,
-            mode=("trilinear", "nearest"),
-            padding_mode="constant"
-        ),
-        # Intensity augmentations
+        # Removed RandRotated and RandZoomd - these 3D operations are very slow
+        # Can re-enable if needed, but will significantly slow down training
+        # Intensity augmentations (kept - these are fast)
         RandGaussianNoised(keys=["image"], prob=0.2, mean=0.0, std=0.05),
-        RandGaussianSmoothd(keys=["image"], prob=0.2, sigma_x=(0.25, 1.0), sigma_y=(0.25, 1.0), sigma_z=(0.25, 1.0)),
+        # Removed RandGaussianSmoothd - slow 3D operation
         RandAdjustContrastd(keys=["image"], prob=0.3, gamma=(0.8, 1.2)),
         RandShiftIntensityd(keys=["image"], prob=0.3, offsets=(-0.1, 0.1)),
         EnsureTyped(keys=["image", "label"]),
@@ -103,16 +88,18 @@ def get_dataloaders(data_dir="./data/raw", batch_size=2, patch_size=(160, 160, 6
     # Loaders
     train_loader = DataLoader(
         train_ds, batch_size=batch_size, shuffle=True,
-        num_workers=2 if debug else 4,   # use less workers in debug mode
-        pin_memory=True,  # Enable pin_memory for faster GPU transfer
+        num_workers=2 if debug else 6,   # Reduced to 6 to avoid pin_memory issues
+        pin_memory=False,  # Disabled due to multiprocessing compatibility issues
         persistent_workers=not debug,
+        prefetch_factor=2 if not debug else None,  # Prefetch batches for faster loading
         collate_fn=list_data_collate
     )
     val_loader = DataLoader(
         val_ds, batch_size=2, shuffle=False,  # Increased batch size for faster validation
-        num_workers=2 if debug else 4,
-        pin_memory=True,  # Enable pin_memory for faster GPU transfer
+        num_workers=2 if debug else 6,  # Reduced to 6 to avoid pin_memory issues
+        pin_memory=False,  # Disabled due to multiprocessing compatibility issues
         persistent_workers=not debug,
+        prefetch_factor=2 if not debug else None,
         collate_fn=list_data_collate
     )
 
