@@ -3,12 +3,12 @@ import csv
 import time
 import torch
 import argparse
+from datetime import datetime
 import torch.backends.cudnn as cudnn
 from torch.optim import AdamW
 from torch.optim.lr_scheduler import ReduceLROnPlateau
 from torch.utils.tensorboard import SummaryWriter
 from tqdm import tqdm, trange
-
 from monai.inferers import sliding_window_inference
 from monai.data import decollate_batch
 
@@ -20,18 +20,12 @@ from models import (
 )
 from utils import log_gpu, log_prediction
 
-# ==============================
-# Argparse
-# ==============================
 parser = argparse.ArgumentParser()
-parser.add_argument("--debug", action="store_true", help="Run in debug mode with small dataset and fewer epochs")
-parser.add_argument("--resume", type=str, default="", help="Path to checkpoint (e.g., data/unet/latest_model.pth)")
-parser.add_argument("--extra_epochs", type=int, default=0, help="How many more epochs to train from the loaded checkpoint")
+parser.add_argument("--debug", action="store_true", help="Debug mode with small dataset")
+parser.add_argument("--resume", type=str, default="", help="Path to checkpoint")
+parser.add_argument("--extra_epochs", type=int, default=0, help="Extra epochs from checkpoint")
 args = parser.parse_args()
 
-# ==============================
-# Configuration
-# ==============================
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print(f"[INFO] Training on {device}")
 cudnn.benchmark = True
@@ -43,58 +37,32 @@ learning_rate = 2e-4
 save_dir = "data/unet_debug" if args.debug else "data/unet"
 os.makedirs(save_dir, exist_ok=True)
 best_dice = -1.0
+USE_COMBINED_LOSS = True
 
-# Loss function configuration
-USE_COMBINED_LOSS = True  # Set to False to use simple DiceCELoss
-
-from datetime import datetime
-# ==============================
-# TensorBoard Init
-# ==============================
 log_dir = os.path.join("tb_logs", datetime.now().strftime("%Y%m%d-%H%M%S"))
 writer = SummaryWriter(log_dir=log_dir)
 print(f"[INFO] TensorBoard logs at {log_dir}")
 
-# ==============================
-# Data Loaders
-# ==============================
 train_loader, val_loader = get_dataloaders(
     data_dir="./data/raw",
-    batch_size=1 if args.debug else 8,  # Reduced to 8 to avoid OOM (was 16, original was 4)
+    batch_size=1 if args.debug else 8,
     debug=args.debug
 )
 
-# ==============================
-# Model Definition
-# ==============================
 model = build_model(device)
-
-# ==============================
-# Loss Function
-# ==============================
 loss_fn = build_loss_fn(device, use_combined=USE_COMBINED_LOSS)
 if USE_COMBINED_LOSS:
     print("[INFO] Using combined loss (DiceCE + FocalTversky + Hausdorff)")
 else:
     print("[INFO] Using simple DiceCELoss")
 
-# ==============================
-# Optimizer, Scheduler
-# ==============================
 optimizer = AdamW(model.parameters(), lr=learning_rate, weight_decay=1e-5)
 scheduler = ReduceLROnPlateau(
     optimizer, mode="max", factor=0.5,
-    patience=15, min_lr=1e-6, verbose=True  # Increased patience from 10 to 15
+    patience=15, min_lr=1e-6, verbose=True
 )
-
-# ==============================
-# AMP Scaler
-# ==============================
 scaler = torch.amp.GradScaler("cuda", enabled=(device.type == "cuda"))
 
-# ==============================
-# Resume (optional)
-# ==============================
 if args.resume:
     print(f"[INFO] Resuming from {args.resume}")
     ckpt = torch.load(args.resume, map_location=device)
@@ -104,7 +72,7 @@ if args.resume:
             try:
                 optimizer.load_state_dict(ckpt["optimizer"])
             except Exception as e:
-                print(f"[WARN] optimizer state load failed: {e}")
+                print(f"[WARN] Optimizer state load failed: {e}")
         start_epoch = int(ckpt.get("epoch", 0))
         best_dice = float(ckpt.get("fg_dice", best_dice))
         print(f"[INFO] Loaded epoch={start_epoch}, prev_fg_dice={ckpt.get('fg_dice', None)}")
@@ -118,9 +86,6 @@ if args.resume:
     num_epochs = total_epochs
     print(f"[INFO] Will train epochs [{start_epoch} -> {num_epochs})")
 
-# ==============================
-# CSV Logger
-# ==============================
 log_path = os.path.join(save_dir, "train_log.csv")
 write_header = not (args.resume and os.path.exists(log_path))
 log_mode = "a" if os.path.exists(log_path) else "w"
@@ -132,26 +97,24 @@ with open(log_path, log_mode, newline="") as f:
             "precision", "recall", "specificity", "miou", "lr", "grad_norm"
         ])
 
-# ==============================
-# Training Loop
-# ==============================
 start_time = time.time()
 for epoch in trange(start_epoch, num_epochs, desc="Total Progress"):
     epoch_start = time.time()
     print(f"\n[Epoch {epoch+1}/{num_epochs}]")
     log_gpu("Start Epoch")
 
-    # -------- Training --------
     model.train()
     train_loss = 0.0
     grad_norm = 0.0
     for step, batch in enumerate(tqdm(train_loader, desc="Training", leave=False)):
         images = batch["image"].to(device)
-        masks  = batch["label"].to(device).long()
+        masks = batch["label"].to(device).long()
         optimizer.zero_grad(set_to_none=True)
+        
         with torch.amp.autocast("cuda", enabled=(device.type == "cuda")):
             outputs = model(images)
-            loss = loss_fn(outputs, masks)  # --- Modified: use total_loss ---
+            loss = loss_fn(outputs, masks)
+        
         scaler.scale(loss).backward()
         total_norm = 0.0
         for p in model.parameters():
@@ -159,50 +122,49 @@ for epoch in trange(start_epoch, num_epochs, desc="Total Progress"):
                 param_norm = p.grad.data.norm(2).item()
                 total_norm += param_norm ** 2
         grad_norm = (total_norm ** 0.5)
+        
         scaler.unscale_(optimizer)
-        # Reduced gradient clipping for better stability (was 5.0)
         torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=2.0)
-        scaler.step(optimizer); scaler.update()
+        scaler.step(optimizer)
+        scaler.update()
         train_loss += loss.item()
+    
     avg_train_loss = train_loss / max(1, len(train_loader))
     print(f"Train Loss: {avg_train_loss:.4f}, GradNorm={grad_norm:.2f}")
     log_gpu("After Training")
 
-    # -------- Validation --------
     model.eval()
     val_loss = 0.0
-    dice_metric.reset(); precision_metric.reset(); recall_metric.reset(); specificity_metric.reset()
+    dice_metric.reset()
+    precision_metric.reset()
+    recall_metric.reset()
+    specificity_metric.reset()
     
-    # Use sliding window only every N epochs for speed (full inference every 10 epochs)
-    use_sliding_window = (epoch + 1) % 10 == 0 or epoch < 5  # First 5 epochs + every 10th epoch
+    use_sliding_window = (epoch + 1) % 10 == 0 or epoch < 5
     
     with torch.inference_mode(), torch.amp.autocast("cuda", enabled=(device.type == "cuda")):
         for step, batch in enumerate(tqdm(val_loader, desc="Validation", leave=False)):
             images = batch["image"].to(device)
-            masks  = batch["label"].to(device).long()
+            masks = batch["label"].to(device).long()
 
-            # Try direct forward first (much faster), fallback to sliding window if needed
             if use_sliding_window:
-                # Full sliding window inference (slower but more accurate)
                 outputs = sliding_window_inference(
                     images,
-                    roi_size=(64, 64, 32) if args.debug else (256, 256, 192),  # Larger ROI = fewer patches
-                    sw_batch_size=1 if args.debug else 8,  # Reduced to 8 to avoid OOM (was 16)
+                    roi_size=(64, 64, 32) if args.debug else (256, 256, 192),
+                    sw_batch_size=1 if args.debug else 8,
                     predictor=model,
-                    overlap=0.25,  # Reduced overlap for speed (was 0.5)
+                    overlap=0.25,
                     mode="gaussian"
                 )
             else:
-                # Direct forward pass (much faster for training monitoring)
                 try:
                     outputs = model(images)
                 except torch.cuda.OutOfMemoryError:
-                    # Fallback to sliding window if OOM
                     print(f"[WARN] OOM during direct forward, using sliding window")
                     outputs = sliding_window_inference(
                         images,
                         roi_size=(64, 64, 32) if args.debug else (256, 256, 192),
-                        sw_batch_size=1 if args.debug else 8,  # Reduced to 8 to avoid OOM (was 16)
+                        sw_batch_size=1 if args.debug else 8,
                         predictor=model,
                         overlap=0.25,
                         mode="gaussian"
@@ -211,9 +173,8 @@ for epoch in trange(start_epoch, num_epochs, desc="Total Progress"):
             loss = loss_fn(outputs, masks)
             val_loss += loss.item()
 
-            # --- Decollate batch before post transforms ---
             y_pred_list = [post_pred(o) for o in decollate_batch(outputs)]
-            y_list      = [post_label(y) for y in decollate_batch(masks)]
+            y_list = [post_label(y) for y in decollate_batch(masks)]
             dice_metric(y_pred=y_pred_list, y=y_list)
             precision_metric(y_pred=y_pred_list, y=y_list)
             recall_metric(y_pred=y_pred_list, y=y_list)
@@ -224,7 +185,6 @@ for epoch in trange(start_epoch, num_epochs, desc="Total Progress"):
     print(f"Val Loss: {avg_val_loss:.4f}, Dice={fg_dice_mean:.4f}")
     log_gpu("After Validation")
 
-    # -------- TensorBoard log --------
     writer.add_scalar("Loss/train", avg_train_loss, epoch+1)
     writer.add_scalar("Loss/val", avg_val_loss, epoch+1)
     writer.add_scalar("Dice/val_mean", fg_dice_mean, epoch+1)
@@ -235,7 +195,6 @@ for epoch in trange(start_epoch, num_epochs, desc="Total Progress"):
     if (epoch + 1) % 10 == 0:
         log_prediction(writer, images.cpu().numpy(), masks.cpu().numpy(), outputs.cpu().numpy(), epoch+1)
 
-    # -------- Save --------
     latest_path = os.path.join(save_dir, "latest_model.pth")
     torch.save({
         "epoch": epoch + 1,
@@ -243,13 +202,13 @@ for epoch in trange(start_epoch, num_epochs, desc="Total Progress"):
         "optimizer": optimizer.state_dict(),
         "fg_dice": fg_dice_mean
     }, latest_path)
+    
     if fg_dice_mean > best_dice:
         best_dice = fg_dice_mean
         best_path = os.path.join(save_dir, "best_model.pth")
         torch.save(model.state_dict(), best_path)
         print(f"[INFO] Best model updated: {best_path} (FG Dice={best_dice:.4f})")
 
-    # --- LR scheduler update ---
     scheduler.step(fg_dice_mean)
 
 writer.close()

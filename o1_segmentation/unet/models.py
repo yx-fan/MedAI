@@ -5,14 +5,8 @@ from monai.losses import DiceCELoss, TverskyLoss, HausdorffDTLoss
 from monai.metrics import DiceMetric, ConfusionMatrixMetric
 from monai.transforms import AsDiscrete, KeepLargestConnectedComponent, Compose
 
-# ==============================
-# FocalTverskyLossCompat (newly added)
-# ==============================
+
 class FocalTverskyLossCompat(nn.Module):
-    """
-    Focal Tversky Loss for 3D medical image segmentation.
-    Combines Tversky loss with a focal component to focus on hard examples.
-    """
     def __init__(self, include_background=False, to_onehot_y=True, softmax=True,
                  alpha=0.7, beta=0.3, gamma=0.75, reduction="mean"):
         super().__init__()
@@ -31,41 +25,22 @@ class FocalTverskyLossCompat(nn.Module):
         return base ** self.gamma
 
 
-# ==============================
-# Model Definition
-# ==============================
 def build_model(device):
     model = UNet(
-        spatial_dims=3,          # 3D segmentation
-        in_channels=1,           # single-channel CT
-        out_channels=2,          # foreground + background
-        channels=(32, 64, 128, 256, 512),  # channels at each layer
-        strides=(2, 2, 2, 2),    # downsampling at each layer
-        num_res_units=2,         # number of residual units
+        spatial_dims=3,
+        in_channels=1,
+        out_channels=2,
+        channels=(32, 64, 128, 256, 512),
+        strides=(2, 2, 2, 2),
+        num_res_units=2,
     ).to(device)
     return model
 
 
-# ==============================
-# Loss function
-# ==============================
-# Option 1: Simple DiceCELoss (baseline)
-# loss_fn = DiceCELoss(to_onehot_y=True, softmax=True)
-
-# Option 2: Combined loss (recommended for better performance)
 def build_loss_fn(device, use_combined=True):
-    """
-    Build loss function. Use combined loss for better segmentation performance.
-    
-    Args:
-        device: torch device
-        use_combined: If True, use combined loss (DiceCE + FocalTversky + Hausdorff)
-                     If False, use simple DiceCELoss
-    """
     if not use_combined:
         return DiceCELoss(to_onehot_y=True, softmax=True)
     
-    # Combined loss components
     ce_weight = torch.tensor([0.2, 0.8], device=device)
     loss_dicece = DiceCELoss(
         include_background=False,
@@ -98,26 +73,14 @@ def build_loss_fn(device, use_combined=True):
     
     return CombinedLoss()
 
-# Default: use simple loss (can be changed in train.py)
-loss_fn = None  # Will be initialized in train.py with device
 
-
-# ==============================
-# Post transforms
-# ==============================
 post_pred = Compose([
     AsDiscrete(argmax=True, to_onehot=2),
     KeepLargestConnectedComponent(applied_labels=[1], is_onehot=True),
 ])
 post_label = AsDiscrete(to_onehot=2)
 
-
-# ==============================
-# Metrics
-# ==============================
 dice_metric = DiceMetric(include_background=False, reduction="none")
-# hausdorff_metric = HausdorffDistanceMetric(include_background=False, reduction="mean", percentile=95, directed=True)
 precision_metric = ConfusionMatrixMetric(metric_name="precision", reduction="mean", include_background=False)
 recall_metric = ConfusionMatrixMetric(metric_name="recall", reduction="mean", include_background=False)
-# miou_metric = ConfusionMatrixMetric(metric_name="jaccard", reduction="mean", include_background=False)
 specificity_metric = ConfusionMatrixMetric(metric_name="specificity", reduction="mean", include_background=False)
