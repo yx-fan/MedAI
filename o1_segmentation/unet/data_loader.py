@@ -36,12 +36,12 @@ def get_dataloaders(data_dir="./data/raw", batch_size=2, patch_size=(160, 160, 8
     train_transforms = Compose([
         LoadImaged(keys=["image", "label"]),
         EnsureChannelFirstd(keys=["image", "label"]),
-        ScaleIntensityRanged(keys=["image"], a_min=-200, a_max=200, b_min=0.0, b_max=1.0, clip=True),
+        ScaleIntensityRanged(keys=["image"], a_min=-100, a_max=94, b_min=0.0, b_max=1.0, clip=True),
         RandCropByPosNegLabeld(
             keys=["image", "label"],
             label_key="label",
             spatial_size=patch_size,
-            pos=4, neg=1,
+            pos=6, neg=1,  # Increased pos from 4 to 6 for better foreground sampling
             num_samples=4,
         ),
         RandFlipd(keys=["image", "label"], prob=0.5, spatial_axis=[0, 1, 2]),
@@ -56,7 +56,7 @@ def get_dataloaders(data_dir="./data/raw", batch_size=2, patch_size=(160, 160, 8
     val_transforms = Compose([
         LoadImaged(keys=["image", "label"]),
         EnsureChannelFirstd(keys=["image", "label"]),
-        ScaleIntensityRanged(keys=["image"], a_min=-200, a_max=200, b_min=0.0, b_max=1.0, clip=True),
+        ScaleIntensityRanged(keys=["image"], a_min=-100, a_max=94, b_min=0.0, b_max=1.0, clip=True),
         EnsureTyped(keys=["image", "label"]),
     ])
 

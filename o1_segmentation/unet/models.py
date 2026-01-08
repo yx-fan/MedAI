@@ -41,7 +41,7 @@ def build_loss_fn(device, use_combined=True):
     if not use_combined:
         return DiceCELoss(to_onehot_y=True, softmax=True)
     
-    ce_weight = torch.tensor([0.2, 0.8], device=device)
+    ce_weight = torch.tensor([0.1, 0.9], device=device)  # Adjusted for severe class imbalance (2262:1)
     loss_dicece = DiceCELoss(
         include_background=False,
         to_onehot_y=True, softmax=True,
