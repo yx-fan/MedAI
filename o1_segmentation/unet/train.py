@@ -60,7 +60,7 @@ print(f"[INFO] TensorBoard logs at {log_dir}")
 # ==============================
 train_loader, val_loader = get_dataloaders(
     data_dir="./data/raw",
-    batch_size=1 if args.debug else 4,  # Increased from 2 to 4 for faster training
+    batch_size=1 if args.debug else 16,  # Increased to 16 to utilize 48GB GPU (was 4)
     debug=args.debug
 )
 
@@ -187,7 +187,7 @@ for epoch in trange(start_epoch, num_epochs, desc="Total Progress"):
                 outputs = sliding_window_inference(
                     images,
                     roi_size=(64, 64, 32) if args.debug else (256, 256, 192),  # Larger ROI = fewer patches
-                    sw_batch_size=1 if args.debug else 8,  # Increased batch size
+                    sw_batch_size=1 if args.debug else 16,  # Increased to 16 to utilize 48GB GPU (was 8)
                     predictor=model,
                     overlap=0.25,  # Reduced overlap for speed (was 0.5)
                     mode="gaussian"
@@ -202,7 +202,7 @@ for epoch in trange(start_epoch, num_epochs, desc="Total Progress"):
                     outputs = sliding_window_inference(
                         images,
                         roi_size=(64, 64, 32) if args.debug else (256, 256, 192),
-                        sw_batch_size=1 if args.debug else 8,
+                        sw_batch_size=1 if args.debug else 16,  # Increased to 16 (was 8)
                         predictor=model,
                         overlap=0.25,
                         mode="gaussian"

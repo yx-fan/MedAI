@@ -18,7 +18,7 @@ from monai.transforms import (
 )
 from monai.data import Dataset, list_data_collate
 
-def get_dataloaders(data_dir="./data/raw", batch_size=2, patch_size=(160, 160, 64), debug=False):
+def get_dataloaders(data_dir="./data/raw", batch_size=2, patch_size=(192, 192, 96), debug=False):
     """
     Create train and validation dataloaders for rectal cancer CT segmentation.
     Args:
@@ -95,7 +95,7 @@ def get_dataloaders(data_dir="./data/raw", batch_size=2, patch_size=(160, 160, 6
         collate_fn=list_data_collate
     )
     val_loader = DataLoader(
-        val_ds, batch_size=2, shuffle=False,  # Increased batch size for faster validation
+        val_ds, batch_size=4, shuffle=False,  # Increased to 4 for faster validation (was 2)
         num_workers=2 if debug else 6,  # Reduced to 6 to avoid pin_memory issues
         pin_memory=False,  # Disabled due to multiprocessing compatibility issues
         persistent_workers=not debug,
