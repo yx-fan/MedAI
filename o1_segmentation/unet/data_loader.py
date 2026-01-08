@@ -15,6 +15,8 @@ from monai.transforms import (
     RandZoomd,
     RandGaussianNoised,
     RandAdjustContrastd,
+    RandShiftIntensityd,
+    RandGaussianSmoothd,
     DivisiblePadd,
 )
 from monai.data import Dataset, list_data_collate
@@ -46,7 +48,7 @@ def get_dataloaders(data_dir="./data/raw", batch_size=2, patch_size=(160, 160, 6
     # Example train_files: [{"image": ".../images/case_0001.nii.gz", "label": ".../masks/case_0001.nii.gz"}, ...]
     # Example val_files: [{"image": ".../images/case_0005.nii.gz", "label": ".../masks/case_0005.nii.gz"}, ...]
 
-    # Training transforms
+    # Training transforms (enhanced with more augmentations)
     train_transforms = Compose([
         LoadImaged(keys=["image", "label"]),
         EnsureChannelFirstd(keys=["image", "label"]),
@@ -59,8 +61,28 @@ def get_dataloaders(data_dir="./data/raw", batch_size=2, patch_size=(160, 160, 6
             pos=4, neg=1,
             num_samples=8,
         ),
-        RandFlipd(keys=["image", "label"], prob=0.5, spatial_axis=[0, 1]),  # Flip along both spatial axes
+        # Geometric augmentations
+        RandFlipd(keys=["image", "label"], prob=0.5, spatial_axis=[0, 1, 2]),  # Flip along all axes
         RandRotate90d(keys=["image", "label"], prob=0.5, max_k=3),          # Rotate 90, 180, or 270 degrees
+        RandRotated(
+            keys=["image", "label"],
+            prob=0.3,
+            range_x=0.1, range_y=0.1, range_z=0.1,  # Small continuous rotations
+            mode=("bilinear", "nearest"),
+            padding_mode="zeros"
+        ),
+        RandZoomd(
+            keys=["image", "label"],
+            prob=0.3,
+            min_zoom=0.9, max_zoom=1.1,
+            mode=("trilinear", "nearest"),
+            padding_mode="constant"
+        ),
+        # Intensity augmentations
+        RandGaussianNoised(keys=["image"], prob=0.2, mean=0.0, std=0.05),
+        RandGaussianSmoothd(keys=["image"], prob=0.2, sigma_x=(0.25, 1.0), sigma_y=(0.25, 1.0), sigma_z=(0.25, 1.0)),
+        RandAdjustContrastd(keys=["image"], prob=0.3, gamma=(0.8, 1.2)),
+        RandShiftIntensityd(keys=["image"], prob=0.3, offsets=(-0.1, 0.1)),
         EnsureTyped(keys=["image", "label"]),
         DivisiblePadd(keys=["image", "label"], k=32),
     ])

@@ -14,7 +14,7 @@ from monai.data import decollate_batch
 
 from data_loader import get_dataloaders
 from models import (
-    build_model, loss_fn,
+    build_model, build_loss_fn,
     dice_metric, precision_metric, recall_metric, specificity_metric,
     post_pred, post_label
 )
@@ -36,13 +36,16 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print(f"[INFO] Training on {device}")
 cudnn.benchmark = True
 
-base_epochs = 100 if not args.debug else 3
+base_epochs = 200 if not args.debug else 3
 num_epochs = base_epochs
 start_epoch = 0
 learning_rate = 2e-4
 save_dir = "data/unet_debug" if args.debug else "data/unet"
 os.makedirs(save_dir, exist_ok=True)
 best_dice = -1.0
+
+# Loss function configuration
+USE_COMBINED_LOSS = True  # Set to False to use simple DiceCELoss
 
 from datetime import datetime
 # ==============================
@@ -67,12 +70,21 @@ train_loader, val_loader = get_dataloaders(
 model = build_model(device)
 
 # ==============================
-# Loss, Optimizer, Scheduler
+# Loss Function
+# ==============================
+loss_fn = build_loss_fn(device, use_combined=USE_COMBINED_LOSS)
+if USE_COMBINED_LOSS:
+    print("[INFO] Using combined loss (DiceCE + FocalTversky + Hausdorff)")
+else:
+    print("[INFO] Using simple DiceCELoss")
+
+# ==============================
+# Optimizer, Scheduler
 # ==============================
 optimizer = AdamW(model.parameters(), lr=learning_rate, weight_decay=1e-5)
 scheduler = ReduceLROnPlateau(
     optimizer, mode="max", factor=0.5,
-    patience=10, min_lr=1e-6, verbose=True
+    patience=15, min_lr=1e-6, verbose=True  # Increased patience from 10 to 15
 )
 
 # ==============================
@@ -148,7 +160,8 @@ for epoch in trange(start_epoch, num_epochs, desc="Total Progress"):
                 total_norm += param_norm ** 2
         grad_norm = (total_norm ** 0.5)
         scaler.unscale_(optimizer)
-        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=5.0)
+        # Reduced gradient clipping for better stability (was 5.0)
+        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=2.0)
         scaler.step(optimizer); scaler.update()
         train_loss += loss.item()
     avg_train_loss = train_loss / max(1, len(train_loader))

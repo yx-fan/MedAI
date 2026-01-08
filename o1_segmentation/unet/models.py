@@ -47,31 +47,59 @@ def build_model(device):
 
 
 # ==============================
-# Loss function (current: DiceCELoss)
+# Loss function
 # ==============================
-# loss_fn = DiceFocalLoss(to_onehot_y=True, softmax=True, gamma=2.0)
-loss_fn = DiceCELoss(to_onehot_y=True, softmax=True)
+# Option 1: Simple DiceCELoss (baseline)
+# loss_fn = DiceCELoss(to_onehot_y=True, softmax=True)
 
-# --- Modified: combined loss (commented out, kept for later use) ---
-# ce_weight = torch.tensor([0.2, 0.8], device=device)
-# loss_dicece = DiceCELoss(
-#     include_background=False,
-#     to_onehot_y=True, softmax=True,
-#     lambda_dice=0.7, lambda_ce=0.3,
-#     weight=ce_weight
-# )
-# loss_ftv = FocalTverskyLossCompat(
-#     include_background=False,
-#     to_onehot_y=True, softmax=True,
-#     alpha=0.7, beta=0.3, gamma=0.75
-# )
-# loss_boundary = HausdorffDTLoss(
-#     include_background=False,
-#     to_onehot_y=True, softmax=True,
-#     alpha=2.0
-# )
-# def total_loss(pred, target):
-#     return 0.5 * loss_dicece(pred, target) + 0.4 * loss_ftv(pred, target) + 0.1 * loss_boundary(pred, target)
+# Option 2: Combined loss (recommended for better performance)
+def build_loss_fn(device, use_combined=True):
+    """
+    Build loss function. Use combined loss for better segmentation performance.
+    
+    Args:
+        device: torch device
+        use_combined: If True, use combined loss (DiceCE + FocalTversky + Hausdorff)
+                     If False, use simple DiceCELoss
+    """
+    if not use_combined:
+        return DiceCELoss(to_onehot_y=True, softmax=True)
+    
+    # Combined loss components
+    ce_weight = torch.tensor([0.2, 0.8], device=device)
+    loss_dicece = DiceCELoss(
+        include_background=False,
+        to_onehot_y=True, softmax=True,
+        lambda_dice=0.7, lambda_ce=0.3,
+        weight=ce_weight
+    )
+    loss_ftv = FocalTverskyLossCompat(
+        include_background=False,
+        to_onehot_y=True, softmax=True,
+        alpha=0.7, beta=0.3, gamma=0.75
+    )
+    loss_boundary = HausdorffDTLoss(
+        include_background=False,
+        to_onehot_y=True, softmax=True,
+        alpha=2.0
+    )
+    
+    class CombinedLoss(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.loss_dicece = loss_dicece
+            self.loss_ftv = loss_ftv
+            self.loss_boundary = loss_boundary
+        
+        def forward(self, pred, target):
+            return (0.5 * self.loss_dicece(pred, target) + 
+                    0.4 * self.loss_ftv(pred, target) + 
+                    0.1 * self.loss_boundary(pred, target))
+    
+    return CombinedLoss()
+
+# Default: use simple loss (can be changed in train.py)
+loss_fn = None  # Will be initialized in train.py with device
 
 
 # ==============================
