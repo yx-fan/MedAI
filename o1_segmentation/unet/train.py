@@ -45,7 +45,7 @@ print(f"[INFO] TensorBoard logs at {log_dir}")
 
 train_loader, val_loader = get_dataloaders(
     data_dir="./data/raw",
-    batch_size=1 if args.debug else 8,
+    batch_size=1 if args.debug else 12,  # Increased from 8 to 12 (test if OOM, can reduce to 10)
     debug=args.debug
 )
 
@@ -140,7 +140,7 @@ for epoch in trange(start_epoch, num_epochs, desc="Total Progress"):
     recall_metric.reset()
     specificity_metric.reset()
     
-    use_sliding_window = (epoch + 1) % 10 == 0 or epoch < 5
+    use_sliding_window = (epoch + 1) % 20 == 0 or epoch < 5  # Reduced validation frequency
     
     with torch.inference_mode(), torch.amp.autocast("cuda", enabled=(device.type == "cuda")):
         for step, batch in enumerate(tqdm(val_loader, desc="Validation", leave=False)):
