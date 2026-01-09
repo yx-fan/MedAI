@@ -51,7 +51,7 @@ train_loader, val_loader = get_dataloaders(
 model = build_model(device)
 loss_fn = build_loss_fn(device, use_combined=USE_COMBINED_LOSS)
 if USE_COMBINED_LOSS:
-    print("[INFO] Using combined loss (DiceCE + FocalTversky + Hausdorff)")
+    print("[INFO] Using combined loss (DiceCE + FocalTversky)")
 else:
     print("[INFO] Using simple DiceCELoss")
 
