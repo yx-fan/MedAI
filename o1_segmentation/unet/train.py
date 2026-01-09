@@ -44,7 +44,7 @@ print(f"[INFO] TensorBoard logs at {log_dir}")
 
 train_loader, val_loader = get_dataloaders(
     data_dir="./data/raw",
-    batch_size=1 if args.debug else 12,
+    batch_size=1 if args.debug else 8,  # Reduced to avoid OOM
     debug=args.debug
 )
 

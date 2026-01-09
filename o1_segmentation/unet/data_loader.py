@@ -65,7 +65,7 @@ def get_dataloaders(data_dir="./data/raw", batch_size=2, patch_size=(160, 160, 9
 
     train_loader = DataLoader(
         train_ds, batch_size=batch_size, shuffle=True,
-        num_workers=2 if debug else 8,  # Increased for faster data loading
+        num_workers=2 if debug else 4,  # Reduced to avoid memory issues
         pin_memory=False,
         persistent_workers=not debug,
         prefetch_factor=2 if not debug else None,
@@ -73,7 +73,7 @@ def get_dataloaders(data_dir="./data/raw", batch_size=2, patch_size=(160, 160, 9
     )
     val_loader = DataLoader(
         val_ds, batch_size=1, shuffle=False,
-        num_workers=2 if debug else 6,
+        num_workers=2 if debug else 4,  # Reduced to avoid memory issues
         pin_memory=False,
         persistent_workers=not debug,
         prefetch_factor=2 if not debug else None,
