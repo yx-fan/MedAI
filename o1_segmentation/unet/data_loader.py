@@ -18,7 +18,7 @@ from monai.transforms import (
 from monai.data import Dataset, list_data_collate
 
 
-def get_dataloaders(data_dir="./data/raw", batch_size=2, patch_size=(160, 160, 80), debug=False):
+def get_dataloaders(data_dir="./data/raw", batch_size=2, patch_size=(160, 160, 96), debug=False):
     images = sorted(glob.glob(os.path.join(data_dir, "images", "*.nii.gz")))
     labels = sorted(glob.glob(os.path.join(data_dir, "masks", "*.nii.gz")))
     print("Found images:", len(images))
@@ -41,16 +41,16 @@ def get_dataloaders(data_dir="./data/raw", batch_size=2, patch_size=(160, 160, 8
             keys=["image", "label"],
             label_key="label",
             spatial_size=patch_size,
-            pos=6, neg=1,  # Increased pos from 4 to 6 for better foreground sampling
-            num_samples=4,
+            pos=6, neg=1,
+            num_samples=3,  # Reduced from 4 to 3 for faster training
         ),
         RandFlipd(keys=["image", "label"], prob=0.5, spatial_axis=[0, 1, 2]),
         RandRotate90d(keys=["image", "label"], prob=0.5, max_k=3),
-        RandGaussianNoised(keys=["image"], prob=0.2, mean=0.0, std=0.05),
-        RandAdjustContrastd(keys=["image"], prob=0.3, gamma=(0.8, 1.2)),
-        RandShiftIntensityd(keys=["image"], prob=0.3, offsets=(-0.1, 0.1)),
+        RandGaussianNoised(keys=["image"], prob=0.15, mean=0.0, std=0.05),
+        RandAdjustContrastd(keys=["image"], prob=0.25, gamma=(0.9, 1.1)),
+        RandShiftIntensityd(keys=["image"], prob=0.25, offsets=(-0.05, 0.05)),
         EnsureTyped(keys=["image", "label"]),
-        DivisiblePadd(keys=["image", "label"], k=32),
+        DivisiblePadd(keys=["image", "label"], k=16),  # UNet downsampling factor is 16 (2^4)
     ])
 
     val_transforms = Compose([
@@ -65,7 +65,7 @@ def get_dataloaders(data_dir="./data/raw", batch_size=2, patch_size=(160, 160, 8
 
     train_loader = DataLoader(
         train_ds, batch_size=batch_size, shuffle=True,
-        num_workers=2 if debug else 4,
+        num_workers=2 if debug else 8,  # Increased for faster data loading
         pin_memory=False,
         persistent_workers=not debug,
         prefetch_factor=2 if not debug else None,
