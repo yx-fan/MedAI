@@ -72,12 +72,16 @@ def debug_val_data(data_dir="./data/raw", random_seed=42):
             images = batch["image"].to(device, non_blocking=False)
             masks = batch["label"].to(device, non_blocking=False).long()
             
-            # 检查尺寸
-            img_shape = images.shape[1:]  # 去掉batch和channel维度
+            # 检查尺寸（只检查空间维度，不包括batch和channel）
+            img_shape = images.shape[2:]  # 去掉batch和channel维度，只保留空间维度
             print(f"Step {step}: image shape = {images.shape}, spatial = {img_shape}")
             
-            # 检查是否能被16整除
+            # 检查是否能被16整除（只检查空间维度）
             divisible_by_16 = all(s % 16 == 0 for s in img_shape)
+            if divisible_by_16:
+                print(f"  ✅ 尺寸能被16整除")
+            else:
+                print(f"  ⚠️  尺寸不能被16整除! (需要padding到: {tuple((s + 15) // 16 * 16 for s in img_shape)})")
             if not divisible_by_16:
                 problematic.append({
                     "step": step,
@@ -85,7 +89,6 @@ def debug_val_data(data_dir="./data/raw", random_seed=42):
                     "shape": img_shape,
                     "divisible": divisible_by_16
                 })
-                print(f"  ⚠️  尺寸不能被16整除!")
             
             # 尝试forward pass
             with torch.inference_mode():
