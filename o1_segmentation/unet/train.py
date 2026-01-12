@@ -183,9 +183,23 @@ for epoch in trange(start_epoch, num_epochs, desc="Total Progress"):
     
     if compute_full_metrics:
         avg_val_loss = val_loss / len(val_loader)
-        precision = float(precision_metric.aggregate())
-        recall = float(recall_metric.aggregate())
-        specificity = float(specificity_metric.aggregate())
+        # ConfusionMatrixMetric.aggregate() may return a list or tensor, handle both cases
+        precision_val = precision_metric.aggregate()
+        recall_val = recall_metric.aggregate()
+        specificity_val = specificity_metric.aggregate()
+        
+        # Convert to float, handling both tensor and list cases
+        def to_float(val):
+            if isinstance(val, (list, tuple)):
+                return float(torch.as_tensor(val).mean().item())
+            elif isinstance(val, torch.Tensor):
+                return float(val.item() if val.numel() == 1 else val.mean().item())
+            else:
+                return float(val)
+        
+        precision = to_float(precision_val)
+        recall = to_float(recall_val)
+        specificity = to_float(specificity_val)
         print(f"Val Loss: {avg_val_loss:.4f}, Dice={fg_dice_mean:.4f}, Prec={precision:.4f}, Rec={recall:.4f}")
     else:
         print(f"Dice={fg_dice_mean:.4f}")
