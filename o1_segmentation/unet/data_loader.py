@@ -58,6 +58,7 @@ def get_dataloaders(data_dir="./data/raw", batch_size=2, patch_size=(160, 160, 9
         EnsureChannelFirstd(keys=["image", "label"]),
         ScaleIntensityRanged(keys=["image"], a_min=-100, a_max=94, b_min=0.0, b_max=1.0, clip=True),
         EnsureTyped(keys=["image", "label"]),
+        DivisiblePadd(keys=["image", "label"], k=16),  # UNet requires dimensions divisible by 16
     ])
 
     train_ds = Dataset(data=train_files, transform=train_transforms)
