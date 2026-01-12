@@ -149,7 +149,12 @@ for epoch in trange(start_epoch, num_epochs, desc="Total Progress"):
             images = batch["image"].to(device, non_blocking=True)
             masks = batch["label"].to(device, non_blocking=True).long()
 
-            if use_sliding_window:
+            # 检查尺寸是否能被16整除（UNet要求）
+            # 如果尺寸不符合要求，强制使用sliding_window_inference
+            img_shape = images.shape[2:]  # 去掉batch和channel维度
+            force_sliding_window = not all(s % 16 == 0 for s in img_shape)
+            
+            if use_sliding_window or force_sliding_window:
                 outputs = sliding_window_inference(
                     images,
                     roi_size=(64, 64, 32) if args.debug else (256, 256, 192),
