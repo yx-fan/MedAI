@@ -1,5 +1,6 @@
 import os
 import glob
+import random
 from torch.utils.data import DataLoader
 from monai.transforms import (
     Compose,
@@ -18,7 +19,7 @@ from monai.transforms import (
 from monai.data import Dataset, list_data_collate
 
 
-def get_dataloaders(data_dir="./data/raw", batch_size=2, patch_size=(160, 160, 96), debug=False):
+def get_dataloaders(data_dir="./data/raw", batch_size=2, patch_size=(160, 160, 96), debug=False, random_seed=42):
     images = sorted(glob.glob(os.path.join(data_dir, "images", "*.nii.gz")))
     labels = sorted(glob.glob(os.path.join(data_dir, "masks", "*.nii.gz")))
     print("Found images:", len(images))
@@ -29,9 +30,19 @@ def get_dataloaders(data_dir="./data/raw", batch_size=2, patch_size=(160, 160, 9
         labels = labels[:8]
         print(f"[DEBUG] Using subset: {len(images)} images")
 
-    n_train = int(0.8 * len(images))
-    train_files = [{"image": img, "label": lbl} for img, lbl in zip(images[:n_train], labels[:n_train])]
-    val_files = [{"image": img, "label": lbl} for img, lbl in zip(images[n_train:], labels[n_train:])]
+    # 随机分割训练/验证集（使用固定seed保证可复现）
+    pairs = list(zip(images, labels))
+    random.seed(random_seed)
+    random.shuffle(pairs)
+    
+    n_train = int(0.8 * len(pairs))
+    train_pairs = pairs[:n_train]
+    val_pairs = pairs[n_train:]
+    
+    train_files = [{"image": img, "label": lbl} for img, lbl in train_pairs]
+    val_files = [{"image": img, "label": lbl} for img, lbl in val_pairs]
+    
+    print(f"Train/Val split: {len(train_files)}/{len(val_files)} (random seed={random_seed})")
 
     train_transforms = Compose([
         LoadImaged(keys=["image", "label"]),
