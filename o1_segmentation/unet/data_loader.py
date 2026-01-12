@@ -52,8 +52,8 @@ def get_dataloaders(data_dir="./data/raw", batch_size=2, patch_size=(160, 160, 9
             keys=["image", "label"],
             label_key="label",
             spatial_size=patch_size,
-            pos=6, neg=1,
-            num_samples=3,  # Reduced from 4 to 3 for faster training
+            pos=8, neg=1,  # 增加正样本采样，改善类别不平衡
+            num_samples=4,  # 增加采样数量，提供更多训练样本
         ),
         RandFlipd(keys=["image", "label"], prob=0.5, spatial_axis=[0, 1, 2]),
         RandRotate90d(keys=["image", "label"], prob=0.5, max_k=3),

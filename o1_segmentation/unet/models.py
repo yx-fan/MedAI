@@ -41,17 +41,20 @@ def build_loss_fn(device, use_combined=True):
     if not use_combined:
         return DiceCELoss(to_onehot_y=True, softmax=True)
     
-    ce_weight = torch.tensor([0.1, 0.9], device=device)  # Adjusted for severe class imbalance (2262:1)
+    # 更激进的权重处理极度不平衡（2262:1）
+    # 增加前景权重，让模型更关注前景
+    ce_weight = torch.tensor([0.05, 0.95], device=device)
     loss_dicece = DiceCELoss(
         include_background=False,
         to_onehot_y=True, softmax=True,
-        lambda_dice=0.7, lambda_ce=0.3,
+        lambda_dice=0.8, lambda_ce=0.2,  # 增加Dice权重，减少CE权重
         weight=ce_weight
     )
+    # 调整FocalTversky参数，更关注假阴性（漏检）
     loss_ftv = FocalTverskyLossCompat(
         include_background=False,
         to_onehot_y=True, softmax=True,
-        alpha=0.7, beta=0.3, gamma=0.75
+        alpha=0.5, beta=0.5, gamma=1.0  # alpha降低，beta增加，gamma增加以更关注难样本
     )
     
     class CombinedLoss(nn.Module):
@@ -64,7 +67,8 @@ def build_loss_fn(device, use_combined=True):
             # DiceCE + FocalTversky combination is sufficient for medical segmentation
             # HausdorffDTLoss removed due to computational cost (very slow for 3D)
             # Boundary quality can be improved via post-processing (KeepLargestConnectedComponent)
-            return 0.6 * self.loss_dicece(pred, target) + 0.4 * self.loss_ftv(pred, target)
+            # 调整权重：更依赖DiceCE（对不平衡数据更稳定）
+            return 0.7 * self.loss_dicece(pred, target) + 0.3 * self.loss_ftv(pred, target)
     
     return CombinedLoss()
 
