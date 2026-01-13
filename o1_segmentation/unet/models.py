@@ -42,19 +42,19 @@ def build_loss_fn(device, use_combined=True):
         return DiceCELoss(to_onehot_y=True, softmax=True)
     
     # 更激进的权重处理极度不平衡（2262:1）
-    # 增加前景权重，让模型更关注前景
-    ce_weight = torch.tensor([0.05, 0.95], device=device)
+    # 进一步增加前景权重，让模型更关注前景
+    ce_weight = torch.tensor([0.02, 0.98], device=device)
     loss_dicece = DiceCELoss(
         include_background=False,
         to_onehot_y=True, softmax=True,
-        lambda_dice=0.8, lambda_ce=0.2,  # 增加Dice权重，减少CE权重
+        lambda_dice=0.85, lambda_ce=0.15,  # 进一步增加Dice权重
         weight=ce_weight
     )
-    # 调整FocalTversky参数，更关注假阴性（漏检）
+    # 调整FocalTversky参数，更关注假阴性（漏检）和难样本
     loss_ftv = FocalTverskyLossCompat(
         include_background=False,
         to_onehot_y=True, softmax=True,
-        alpha=0.5, beta=0.5, gamma=1.0  # alpha降低，beta增加，gamma增加以更关注难样本
+        alpha=0.5, beta=0.5, gamma=1.5  # 增加gamma以更关注难样本
     )
     
     class CombinedLoss(nn.Module):
@@ -68,7 +68,7 @@ def build_loss_fn(device, use_combined=True):
             # HausdorffDTLoss removed due to computational cost (very slow for 3D)
             # Boundary quality can be improved via post-processing (KeepLargestConnectedComponent)
             # 调整权重：更依赖DiceCE（对不平衡数据更稳定）
-            return 0.7 * self.loss_dicece(pred, target) + 0.3 * self.loss_ftv(pred, target)
+            return 0.75 * self.loss_dicece(pred, target) + 0.25 * self.loss_ftv(pred, target)
     
     return CombinedLoss()
 

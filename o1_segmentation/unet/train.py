@@ -32,7 +32,7 @@ cudnn.benchmark = True
 base_epochs = 200 if not args.debug else 3
 num_epochs = base_epochs
 start_epoch = 0
-learning_rate = 1e-4  # 降低学习率，更稳定的训练
+learning_rate = 2e-4  # 提高初始学习率，避免过早衰减
 save_dir = "data/unet_debug" if args.debug else "data/unet"
 os.makedirs(save_dir, exist_ok=True)
 best_dice = -1.0
@@ -55,10 +55,10 @@ if USE_COMBINED_LOSS:
 else:
     print("[INFO] Using simple DiceCELoss")
 
-optimizer = AdamW(model.parameters(), lr=learning_rate, weight_decay=1e-5)
+optimizer = AdamW(model.parameters(), lr=learning_rate, weight_decay=3e-5)  # 增加正则化
 scheduler = ReduceLROnPlateau(
-    optimizer, mode="max", factor=0.5,
-    patience=15, min_lr=1e-6, verbose=False
+    optimizer, mode="max", factor=0.75,  # 降低衰减因子，更温和的衰减
+    patience=20, min_lr=1e-6, verbose=False  # 增加patience，避免过早衰减
 )
 scaler = torch.amp.GradScaler("cuda", enabled=(device.type == "cuda"))
 
