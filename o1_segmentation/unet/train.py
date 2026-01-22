@@ -55,10 +55,10 @@ if USE_COMBINED_LOSS:
 else:
     print("[INFO] Using simple DiceCELoss")
 
-optimizer = AdamW(model.parameters(), lr=learning_rate, weight_decay=3e-5)  # 增加正则化
+optimizer = AdamW(model.parameters(), lr=learning_rate, weight_decay=1e-4)  # 增强正则化防止过拟合
 scheduler = ReduceLROnPlateau(
-    optimizer, mode="max", factor=0.75,  # 降低衰减因子，更温和的衰减
-    patience=10, min_lr=1e-6, verbose=False  # 增加patience，避免过早衰减
+    optimizer, mode="max", factor=0.75,  # 温和的衰减因子
+    patience=15, min_lr=1e-6, verbose=False  # 适中的patience，平衡学习率和收敛
 )
 scaler = torch.amp.GradScaler("cuda", enabled=(device.type == "cuda"))
 
@@ -157,10 +157,10 @@ for epoch in trange(start_epoch, num_epochs, desc="Total Progress"):
             if use_sliding_window or force_sliding_window:
                 outputs = sliding_window_inference(
                     images,
-                    roi_size=(64, 64, 32) if args.debug else (96, 96, 64),
+                    roi_size=(64, 64, 32) if args.debug else (160, 160, 128),  # 与训练patch_size一致
                     sw_batch_size=1 if args.debug else 8,
                     predictor=model,
-                    overlap=0.5,
+                    overlap=0.25,  # 适中的overlap，平衡精度和速度
                     mode="gaussian"
                 )
             else:

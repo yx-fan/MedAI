@@ -41,20 +41,25 @@ def build_loss_fn(device, use_combined=True):
     if not use_combined:
         return DiceCELoss(to_onehot_y=True, softmax=True)
     
-    # 更激进的权重处理极度不平衡（2262:1）
-    # 进一步增加前景权重，让模型更关注前景
-    ce_weight = torch.tensor([0.02, 0.98], device=device)
+    # 处理极度不平衡（2262:1）
+    # CE weight: 背景:前景 = 1:50，归一化后约为 [0.02, 0.98]
+    # 使用更直观的比例表示，但保持归一化（PyTorch CrossEntropyLoss需要）
+    ce_weight = torch.tensor([1.0, 50.0], device=device)
+    ce_weight = ce_weight / ce_weight.sum()  # 归一化到 [0.0196, 0.9804]
+    
     loss_dicece = DiceCELoss(
         include_background=False,
         to_onehot_y=True, softmax=True,
-        lambda_dice=0.85, lambda_ce=0.15,  # 进一步增加Dice权重
+        lambda_dice=0.7, lambda_ce=0.3,  # 增加CE权重以更好惩罚假阳性
         weight=ce_weight
     )
-    # 调整FocalTversky参数，更关注假阴性（漏检）和难样本
+    # FocalTversky参数：alpha > beta 以减少假阳性（提升Precision）
+    # alpha控制假阳性(FP)惩罚，beta控制假阴性(FN)惩罚
+    # 当前Precision低(0.42)，需要更严厉惩罚假阳性
     loss_ftv = FocalTverskyLossCompat(
         include_background=False,
         to_onehot_y=True, softmax=True,
-        alpha=0.2, beta=0.8, gamma=1.5  # 增加gamma以更关注难样本
+        alpha=0.7, beta=0.3, gamma=1.5  # alpha > beta 减少假阳性
     )
     
     class CombinedLoss(nn.Module):
@@ -64,11 +69,9 @@ def build_loss_fn(device, use_combined=True):
             self.loss_ftv = loss_ftv
         
         def forward(self, pred, target):
-            # DiceCE + FocalTversky combination is sufficient for medical segmentation
-            # HausdorffDTLoss removed due to computational cost (very slow for 3D)
-            # Boundary quality can be improved via post-processing (KeepLargestConnectedComponent)
-            # 调整权重：更依赖DiceCE（对不平衡数据更稳定）
-            return 0.75 * self.loss_dicece(pred, target) + 0.25 * self.loss_ftv(pred, target)
+            # 提高FocalTversky权重，更关注难样本和边界质量
+            # 平衡组合：DiceCE提供稳定性，FocalTversky提供难样本聚焦
+            return 0.6 * self.loss_dicece(pred, target) + 0.4 * self.loss_ftv(pred, target)
     
     return CombinedLoss()
 
