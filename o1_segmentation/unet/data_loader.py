@@ -20,7 +20,7 @@ from monai.transforms import (
 from monai.data import Dataset, list_data_collate
 
 
-def get_dataloaders(data_dir="./data/raw", batch_size=2, patch_size=(160, 160, 96), debug=False, random_seed=42):
+def get_dataloaders(data_dir="./data/raw", batch_size=2, patch_size=(96, 96, 64), debug=False, random_seed=42):
     images = sorted(glob.glob(os.path.join(data_dir, "images", "*.nii.gz")))
     labels = sorted(glob.glob(os.path.join(data_dir, "masks", "*.nii.gz")))
     print("Found images:", len(images))
@@ -53,15 +53,15 @@ def get_dataloaders(data_dir="./data/raw", batch_size=2, patch_size=(160, 160, 9
             keys=["image", "label"],
             label_key="label",
             spatial_size=patch_size,
-            pos=10, neg=1,  # 进一步增加正样本采样，改善类别不平衡
+            pos=2, neg=1,  # 进一步增加正样本采样，改善类别不平衡
             num_samples=4,  # 保持4个样本，平衡性能和多样性
         ),
         RandFlipd(keys=["image", "label"], prob=0.5, spatial_axis=[0, 1, 2]),
         RandRotate90d(keys=["image", "label"], prob=0.5, max_k=3),
-        RandZoomd(keys=["image", "label"], prob=0.3, min_zoom=0.9, max_zoom=1.1, mode="trilinear"),  # 添加随机缩放
-        RandGaussianNoised(keys=["image"], prob=0.2, mean=0.0, std=0.08),  # 增加噪声强度和概率
-        RandAdjustContrastd(keys=["image"], prob=0.3, gamma=(0.8, 1.2)),  # 增加对比度调整范围
-        RandShiftIntensityd(keys=["image"], prob=0.3, offsets=(-0.1, 0.1)),  # 增加强度偏移范围
+        # RandZoomd(keys=["image", "label"], prob=0.3, min_zoom=0.9, max_zoom=1.1, mode="trilinear"),  # 添加随机缩放
+        # RandGaussianNoised(keys=["image"], prob=0.2, mean=0.0, std=0.08),  # 增加噪声强度和概率
+        # RandAdjustContrastd(keys=["image"], prob=0.3, gamma=(0.8, 1.2)),  # 增加对比度调整范围
+        # RandShiftIntensityd(keys=["image"], prob=0.3, offsets=(-0.1, 0.1)),  # 增加强度偏移范围
         EnsureTyped(keys=["image", "label"]),
         DivisiblePadd(keys=["image", "label"], k=16),  # UNet downsampling factor is 16 (2^4)
     ])

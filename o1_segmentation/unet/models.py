@@ -54,7 +54,7 @@ def build_loss_fn(device, use_combined=True):
     loss_ftv = FocalTverskyLossCompat(
         include_background=False,
         to_onehot_y=True, softmax=True,
-        alpha=0.5, beta=0.5, gamma=1.5  # 增加gamma以更关注难样本
+        alpha=0.2, beta=0.8, gamma=1.5  # 增加gamma以更关注难样本
     )
     
     class CombinedLoss(nn.Module):

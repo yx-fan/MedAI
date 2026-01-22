@@ -58,7 +58,7 @@ else:
 optimizer = AdamW(model.parameters(), lr=learning_rate, weight_decay=3e-5)  # 增加正则化
 scheduler = ReduceLROnPlateau(
     optimizer, mode="max", factor=0.75,  # 降低衰减因子，更温和的衰减
-    patience=20, min_lr=1e-6, verbose=False  # 增加patience，避免过早衰减
+    patience=10, min_lr=1e-6, verbose=False  # 增加patience，避免过早衰减
 )
 scaler = torch.amp.GradScaler("cuda", enabled=(device.type == "cuda"))
 
@@ -157,10 +157,10 @@ for epoch in trange(start_epoch, num_epochs, desc="Total Progress"):
             if use_sliding_window or force_sliding_window:
                 outputs = sliding_window_inference(
                     images,
-                    roi_size=(64, 64, 32) if args.debug else (256, 256, 192),
+                    roi_size=(64, 64, 32) if args.debug else (96, 96, 64),
                     sw_batch_size=1 if args.debug else 8,
                     predictor=model,
-                    overlap=0.25,
+                    overlap=0.5,
                     mode="gaussian"
                 )
             else:
