@@ -26,11 +26,14 @@ class FocalTverskyLossCompat(nn.Module):
 
 
 def build_model(device):
+    # 降低模型容量以减少过拟合：从(32,64,128,256,512)降到(24,48,96,192,384)
+    # 减少约30%参数量，提升泛化能力
+    # 注意：MONAI UNet可能不支持dropout参数，通过降低通道数和weight_decay来正则化
     model = UNet(
         spatial_dims=3,
         in_channels=1,
         out_channels=2,
-        channels=(32, 64, 128, 256, 512),
+        channels=(24, 48, 96, 192, 384),  # 减少通道数，降低模型容量
         strides=(2, 2, 2, 2),
         num_res_units=2,
     ).to(device)
@@ -69,9 +72,9 @@ def build_loss_fn(device, use_combined=True):
             self.loss_ftv = loss_ftv
         
         def forward(self, pred, target):
-            # 提高FocalTversky权重，更关注难样本和边界质量
-            # 平衡组合：DiceCE提供稳定性，FocalTversky提供难样本聚焦
-            return 0.6 * self.loss_dicece(pred, target) + 0.4 * self.loss_ftv(pred, target)
+            # 调整权重：更依赖DiceCE以提升稳定性，减少过拟合风险
+            # DiceCE对不平衡数据更稳定，FocalTversky关注难样本但可能增加不稳定性
+            return 0.7 * self.loss_dicece(pred, target) + 0.3 * self.loss_ftv(pred, target)
     
     return CombinedLoss()
 

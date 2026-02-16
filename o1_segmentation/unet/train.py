@@ -32,10 +32,11 @@ cudnn.benchmark = True
 base_epochs = 200 if not args.debug else 3
 num_epochs = base_epochs
 start_epoch = 0
-learning_rate = 2e-4  # 提高初始学习率，避免过早衰减
+learning_rate = 1e-4  # 降低初始学习率，减少过拟合风险
 save_dir = "data/unet_debug" if args.debug else "data/unet"
 os.makedirs(save_dir, exist_ok=True)
 best_dice = -1.0
+patience_counter = 0  # 早停计数器
 USE_COMBINED_LOSS = True
 
 log_dir = os.path.join("tb_logs", datetime.now().strftime("%Y%m%d-%H%M%S"))
@@ -55,10 +56,10 @@ if USE_COMBINED_LOSS:
 else:
     print("[INFO] Using simple DiceCELoss")
 
-optimizer = AdamW(model.parameters(), lr=learning_rate, weight_decay=1e-4)  # 增强正则化防止过拟合
+optimizer = AdamW(model.parameters(), lr=learning_rate, weight_decay=2e-4)  # 进一步增强正则化
 scheduler = ReduceLROnPlateau(
-    optimizer, mode="max", factor=0.75,  # 温和的衰减因子
-    patience=15, min_lr=1e-6, verbose=False  # 适中的patience，平衡学习率和收敛
+    optimizer, mode="max", factor=0.7,  # 更温和的衰减因子
+    patience=20, min_lr=1e-6, verbose=False  # 增加patience，避免过早衰减
 )
 scaler = torch.amp.GradScaler("cuda", enabled=(device.type == "cuda"))
 
@@ -115,7 +116,7 @@ for epoch in trange(start_epoch, num_epochs, desc="Total Progress"):
         scaler.scale(loss).backward()
         scaler.unscale_(optimizer)
         
-        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=2.0)
+        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)  # 更严格的梯度裁剪，提升稳定性
         
         if step == len(train_loader) - 1:
             total_norm = 0.0
@@ -227,11 +228,18 @@ for epoch in trange(start_epoch, num_epochs, desc="Total Progress"):
         "fg_dice": fg_dice_mean
     }, latest_path)
     
+    # 早停机制：如果Dice持续不提升，提前停止
     if fg_dice_mean > best_dice:
         best_dice = fg_dice_mean
         best_path = os.path.join(save_dir, "best_model.pth")
         torch.save(model.state_dict(), best_path)
         print(f"[INFO] Best model updated: Dice={best_dice:.4f}")
+        patience_counter = 0  # 重置patience
+    else:
+        patience_counter += 1
+        if patience_counter >= 30:  # 30个epoch没有提升则早停
+            print(f"[INFO] Early stopping: No improvement for {patience_counter} epochs")
+            break
 
     if compute_full_metrics:
         writer_csv.writerow([
